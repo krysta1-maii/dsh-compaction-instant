@@ -52,7 +52,7 @@ function makeIdleSession() {
 function makeFakeMeter() {
   return {
     measure: (session) => {
-      const nodes = session.surface.nodes.map((seq) => ({ seq, tokens: 100 }));
+      const nodes = session.surface.nodes.map((seq) => ({ seq, tokens: 100, heuristicTokens: 100 }));
       return {
         logRevision: 0,
         baseline: { kind: "none", tokens: 0 },
@@ -182,7 +182,7 @@ test("compactSurfaceRegion runs a complete manual transaction with a flush", asy
   assert.match(summaryText, /## Compiled checkpoint: 4 nodes \(seqs 1-4, ~400 tokens\)/);
   assert.match(summaryText, /\[user\]\ncompiled body/);
   assert.match(summaryText, /尾部原文保留: 1 节点 \/ ~100 tokens/);
-  const events = session.events;
+  const events = session.snapshotEvents();
   const startEvent = events[result.startSeq];
   const summaryEvent = events[result.summarySeq];
   const endEvent = events[result.endSeq];
@@ -201,6 +201,25 @@ test("compactSurfaceRegion runs a complete manual transaction with a flush", asy
   assert.deepEqual(session.surface.nodes, [checkpoint.seq, 5]);
 });
 
+test("compactSurfaceRegion records heuristic shadow price but checks shrink against route tokens", async () => {
+  const session = makeIdleSession();
+  const meter = makeFakeMeter();
+  meter.measure = (target) => {
+    const measured = makeFakeMeter().measure(target);
+    return {
+      ...measured,
+      nodes: measured.nodes.map((node) => ({ ...node, heuristicTokens: 25 }))
+    };
+  };
+  meter.estimateMessage = () => 200;
+  const result = await compactSurfaceRegion({ meter, compile: fakeCompile }, session, 1, 4, undefined, {
+    owner: null,
+    stability: "selected-span"
+  }, undefined);
+  assert.equal(result.shadowedTokenCount, 100);
+  assert.equal(session.eventAt(result.summarySeq).data.shadowedTokenCount, 100);
+});
+
 test("compactSurfaceRegion rejects a checkpoint that does not shrink the surface", async () => {
   const session = makeIdleSession();
   const meter = makeFakeMeter();
@@ -210,7 +229,7 @@ test("compactSurfaceRegion rejects a checkpoint that does not shrink the surface
     (error) => error instanceof ManualCompactionError && error.code === "summary"
   );
   // The failed manual attempt still closed its bracket with an error marker.
-  const events = session.events;
+  const events = session.snapshotEvents();
   const last = events[events.length - 1];
   assert.equal(last.type, "compaction/end");
   assert.ok(last.data.error.length > 0);
@@ -261,7 +280,7 @@ test("compactSurfaceRegion runs an automatic in-turn transaction", async () => {
     stability: "whole-surface"
   }, undefined);
   assert.deepEqual(result.shadowedSeqs, [1, 2, 3, 4]);
-  assert.equal(session.events[result.startSeq].data.turn, 2);
+  assert.equal(session.eventAt(result.startSeq).data.turn, 2);
 });
 
 test("SurfaceChangedError is exported for callers to distinguish", () => {

@@ -47,6 +47,7 @@ const COMPILER_MODEL = "vcc-compiler";
 const POLICY_CONFIG_KEYS = [
   "thresholdRatio",
   "retainTurns",
+  "retainRatio",
   "retainTokens",
   // Accepted for drop-in configuration compatibility with compaction-basic;
   // the instant backend never routes a model, so these are inert.
@@ -104,17 +105,75 @@ export class TargetPressureConfigError extends Error {
 }
 
 /**
- * Pick the settings-exposed subset out of a composition entry config, so the
- * namespace's `base` layer carries exactly the fields its schema declares.
+ * Pick the settings-exposed subset out of a resolved engine config, so the
+ * namespace base is complete, JSON-safe, and preserves one retention mode.
  */
 function pickSettingsFields(config) {
   return {
-    ...config.checkpointCap !== undefined ? { checkpointCap: config.checkpointCap } : {},
-    ...config.auto !== undefined ? { auto: config.auto } : {},
-    ...config.thresholdRatio !== undefined ? { thresholdRatio: config.thresholdRatio } : {},
-    ...config.retainTurns !== undefined ? { retainTurns: config.retainTurns } : {},
-    ...config.retainTokens !== undefined ? { retainTokens: config.retainTokens } : {}
+    checkpointCap: config.checkpointCap,
+    auto: config.auto,
+    thresholdRatio: config.thresholdRatio,
+    retainTurns: config.retainTurns,
+    ...config.retainRatio !== undefined ? { retainRatio: config.retainRatio } : { retainTokens: config.retainTokens }
   };
+}
+
+/** Apply the host-global settings mode over one preset entry. */
+function mergeSettingsFields(entry, settings) {
+  const normalizedEntry = { ...entry };
+  if (settings.retainRatio !== undefined) delete normalizedEntry.retainTokens;
+  if (settings.retainTokens !== undefined) delete normalizedEntry.retainRatio;
+  return { ...normalizedEntry, ...settings };
+}
+
+const SETTINGS_GROUPS = new WeakMap();
+const FIBER_DISPOSED = 4;
+const FIBER_UNLOADING = 5;
+
+function isContextUnloading(ctx) {
+  return ctx.fiber.state === FIBER_UNLOADING || ctx.fiber.state === FIBER_DISPOSED;
+}
+
+function reloadSettingsGroup(group) {
+  for (const member of group.members) member.engine._reloadConfig();
+}
+
+function installSettingsOwner(group, member) {
+  if (member.disposed || isContextUnloading(member.ctx) || group.owner !== null) return;
+  group.owner = member;
+  member.scoped.settings.installSection(
+    member.ctx,
+    InstantCompactionEngine.SETTINGS_NAMESPACE,
+    InstantCompactionEngine.SETTINGS_SCHEMA,
+    group.base,
+    {
+      validate: (value) => {
+        for (const current of group.members) resolveConfig(mergeSettingsFields(current.entry, value));
+      },
+      setSource: (current) => {
+        group.current = current;
+        for (const target of group.members) {
+          target.engine.source = () => mergeSettingsFields(target.entry, current());
+        }
+      },
+      onChange: () => {
+        reloadSettingsGroup(group);
+      }
+    }
+  );
+}
+
+function promoteSettingsOwner(group) {
+  if (group.owner !== null || group.members.size === 0) return;
+  const member = Array.from(group.members).find((candidate) => !candidate.disposed && !isContextUnloading(candidate.ctx));
+  if (member === undefined) return;
+  const existing = member.scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE);
+  if (existing !== undefined) {
+    group.current = () => member.scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE) ?? {};
+    reloadSettingsGroup(group);
+    return;
+  }
+  installSettingsOwner(group, member);
 }
 
 /**
@@ -128,14 +187,22 @@ export function resolveConfig(config = {}) {
   if (config.auto !== undefined && typeof config.auto !== "boolean") throw new Error("InstantCompactionConfig: auto must be a boolean");
   const thresholdRatio = config.thresholdRatio ?? DEFAULT_THRESHOLD_RATIO;
   const retainTurns = config.retainTurns ?? DEFAULT_RETAIN_TURNS;
-  const retainTokens = config.retainTokens ?? DEFAULT_RETAIN_TOKENS;
+  const retention = resolveRetention(config, { retainTokens: DEFAULT_RETAIN_TOKENS });
+  validateRetentionThreshold(thresholdRatio, retention, "InstantCompactionConfig");
   const modelPolicies = resolveModelPolicies(config.modelPolicies);
+  for (const [index, policy] of modelPolicies.entries()) {
+    validateRetentionThreshold(
+      policy.thresholdRatio ?? thresholdRatio,
+      resolveRetention(policy, retention),
+      `InstantCompactionConfig: modelPolicies[${index}]`
+    );
+  }
   const debug = config.debug === true || (typeof process !== "undefined" && process.env?.DSH_COMPACTION_DEBUG === "1");
   const debugLogPath = config.debugLogPath ?? (typeof process !== "undefined" && process.env?.DSH_HOME ? `${process.env.DSH_HOME}/compaction-debug.log` : "/tmp/dsh-compaction-debug.log");
   return deepFreeze({
     thresholdRatio,
     retainTurns,
-    retainTokens,
+    ...retention,
     maxTokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
     checkpointScale: config.checkpointScale ?? DEFAULT_CHECKPOINT_SCALE,
     checkpointCap: config.checkpointCap ?? DEFAULT_CHECKPOINT_CAP,
@@ -182,7 +249,7 @@ export function resolveTargetPolicy(config, target) {
     },
     thresholdRatio: override?.thresholdRatio ?? config.thresholdRatio,
     retainTurns: override?.retainTurns ?? config.retainTurns,
-    retainTokens: override?.retainTokens ?? config.retainTokens,
+    ...resolveRetention(override ?? {}, config.retainRatio !== undefined ? { retainRatio: config.retainRatio } : { retainTokens: config.retainTokens }),
     summarizationProvider: override?.summarizationProvider ?? config.summarizationProvider ?? "",
     summarizationModel: override?.summarizationModel ?? config.summarizationModel ?? "",
     maxTokens: override?.maxTokens ?? config.maxTokens,
@@ -201,17 +268,32 @@ export function resolveCompactSpec(policy, contextWindow) {
   const targetKey = `${policy.target.provider}/${policy.target.model}`;
   if (!Number.isInteger(contextWindow) || contextWindow <= 0) throw new TargetPressureConfigError(targetKey, `InstantCompactionConfig: contextWindow (${contextWindow}) must be a positive integer`);
   const thresholdTokens = Math.floor(contextWindow * policy.thresholdRatio);
+  const retainTokens = policy.retainTokens ?? Math.floor(contextWindow * policy.retainRatio);
   return deepFreeze({
     target: { ...policy.target },
     contextWindow,
     thresholdRatio: policy.thresholdRatio,
     thresholdTokens,
     retainTurns: policy.retainTurns,
-    retainTokens: policy.retainTokens,
+    retainTokens,
     maxTokens: policy.maxTokens,
     compactionRetries: policy.compactionRetries,
     maxOverflowRetries: policy.maxOverflowRetries
   });
+}
+
+/** Choose an explicit retention form or inherit the resolved fallback. */
+function resolveRetention(config, fallback) {
+  if (config.retainTokens !== undefined) return { retainTokens: config.retainTokens };
+  if (config.retainRatio !== undefined) return { retainRatio: config.retainRatio };
+  return fallback;
+}
+
+/** Reject a ratio that cannot leave useful room below the pressure threshold. */
+function validateRetentionThreshold(thresholdRatio, retention, name) {
+  if (retention.retainRatio !== undefined && retention.retainRatio >= thresholdRatio) {
+    throw new Error(`${name}: retainRatio (${retention.retainRatio}) must be less than the resolved thresholdRatio (${thresholdRatio})`);
+  }
 }
 
 /** Validate, detach, and reject duplicate exact-target policies. */
@@ -241,13 +323,16 @@ function assertModelPolicy(source, name) {
 function validatePolicy(config, name) {
   const thresholdRatio = config.thresholdRatio;
   const retainTurns = config.retainTurns;
+  const retainRatio = config.retainRatio;
   const retainTokens = config.retainTokens;
   const maxTokens = config.maxTokens;
   const compactionRetries = config.compactionRetries;
   const maxOverflowRetries = config.maxOverflowRetries;
   if (thresholdRatio !== undefined) assertRatio(`${name}.thresholdRatio`, thresholdRatio);
   if (retainTurns !== undefined) assertPositiveInteger(`${name}.retainTurns`, retainTurns);
+  if (retainRatio !== undefined) assertRatio(`${name}.retainRatio`, retainRatio);
   if (retainTokens !== undefined) assertNonNegativeInteger(`${name}.retainTokens`, retainTokens);
+  if (retainRatio !== undefined && retainTokens !== undefined) throw new Error(`${name}: retainRatio and retainTokens are mutually exclusive`);
   if (maxTokens !== undefined) assertPositiveInteger(`${name}.maxTokens`, maxTokens);
   if (compactionRetries !== undefined) assertNonNegativeInteger(`${name}.compactionRetries`, compactionRetries);
   if (maxOverflowRetries !== undefined) assertNonNegativeInteger(`${name}.maxOverflowRetries`, maxOverflowRetries);
@@ -342,8 +427,19 @@ export function routedTarget(session) {
   };
 }
 
-const thresholdRatioSchema = z.number();
+/** Resolve the route for retention policies outside a logged request. */
+function conversationTarget(agent) {
+  const routed = routedTarget(agent.session);
+  if (routed !== undefined) return routed;
+  const provider = agent.options?.provider;
+  const model = agent.options?.model;
+  if (typeof provider !== "string" || provider.length === 0 || typeof model !== "string" || model.length === 0) return;
+  return { provider, model };
+}
+
+const thresholdRatioSchema = z.number().min(0).max(1);
 const retainTurnsSchema = z.number().step(1).min(1);
+const retainRatioSchema = z.number().min(0).max(1);
 const retainTokensSchema = z.number().step(1).min(0);
 const checkpointScaleSchema = z.number();
 const checkpointCapSchema = z.number().step(1).min(1);
@@ -357,6 +453,7 @@ const modelPolicy = z.object({
   model: z.string().required(),
   thresholdRatio: thresholdRatioSchema,
   retainTurns: retainTurnsSchema,
+  retainRatio: retainRatioSchema,
   retainTokens: retainTokensSchema,
   summarizationProvider: summarizationProviderSchema,
   summarizationModel: summarizationModelSchema,
@@ -404,6 +501,7 @@ export class InstantCompactionEngine extends CompactionEngine {
   static Config = z.object({
     thresholdRatio: thresholdRatioSchema,
     retainTurns: retainTurnsSchema,
+    retainRatio: retainRatioSchema,
     retainTokens: retainTokensSchema,
     checkpointScale: checkpointScaleSchema,
     checkpointCap: checkpointCapSchema,
@@ -430,17 +528,17 @@ export class InstantCompactionEngine extends CompactionEngine {
   /** Settings namespace for user-owned instant-compaction preferences. */
   static SETTINGS_NAMESPACE = "compaction-instant";
   /**
-   * Settings-exposed subset of the engine configuration. Defaults mirror the
-   * engine's own `DEFAULT_*` constants so the resolved settings layer is
-   * exactly what `resolveConfig` would compute. Debug behavior stays
-   * engine-config-only (`debug`, `debugLogPath`, `DSH_COMPACTION_DEBUG`).
+   * Settings-exposed subset of the engine configuration. The first engine
+   * supplies a fully resolved base, including exactly one retention mode; the
+   * schema validates sparse user overrides. Debug behavior stays engine-only.
    */
   static SETTINGS_SCHEMA = z.object({
-    checkpointCap: z.number().step(1).min(1).default(DEFAULT_CHECKPOINT_CAP),
-    auto: z.boolean().default(true),
-    thresholdRatio: z.number().min(0).max(1).default(DEFAULT_THRESHOLD_RATIO),
-    retainTurns: z.number().step(1).min(1).default(DEFAULT_RETAIN_TURNS),
-    retainTokens: z.number().step(1).min(0).default(DEFAULT_RETAIN_TOKENS)
+    checkpointCap: z.number().step(1).min(1),
+    auto: z.boolean(),
+    thresholdRatio: thresholdRatioSchema,
+    retainTurns: retainTurnsSchema,
+    retainRatio: retainRatioSchema,
+    retainTokens: retainTokensSchema
   });
   /** Resolved and validated compaction configuration. */
   config;
@@ -479,31 +577,54 @@ export class InstantCompactionEngine extends CompactionEngine {
    */
   _installSettingsSection(ctx) {
     const entry = this.entry;
-    const base = pickSettingsFields(entry);
-    // dsh 0.1.2 removed installSettingsSection/settingsNamespace. Register
-    // through ctx.settings when the service exists; otherwise keep the
-    // composition entry as the config source.
+    const base = pickSettingsFields(this.config);
+    // DSH 0.1.2 mounts compaction engines per preset/session while settings is
+    // host-global. Coordinate one namespace owner per root and promote a live
+    // follower if the owning preset unloads.
     ctx.inject(["settings"], (scoped) => {
-      const scope = scoped.settings.register(
-        InstantCompactionEngine.SETTINGS_NAMESPACE,
-        InstantCompactionEngine.SETTINGS_SCHEMA,
-        {
-          base,
-          validate: (value) => {
-            resolveConfig({ ...entry, ...value });
-          },
-        },
-      );
-      this.source = () => ({ ...entry, ...scope.get() });
-      scoped.effect(() => () => {
+      let group = SETTINGS_GROUPS.get(ctx.root);
+      if (group === undefined) {
+        group = { root: ctx.root, members: new Set(), owner: null, current: undefined, base };
+        SETTINGS_GROUPS.set(ctx.root, group);
+      }
+      const member = { engine: this, ctx, scoped, entry, disposed: false };
+      group.members.add(member);
+      let stopSettingsUpdates = () => {};
+      const detachMember = () => {
+        if (member.disposed) return;
+        member.disposed = true;
+        stopSettingsUpdates();
+        const wasOwner = group.owner === member;
+        if (wasOwner) {
+          group.owner = null;
+          group.current = undefined;
+        }
+        group.members.delete(member);
         this.source = () => entry;
-        this._reloadConfig();
+        if (!isContextUnloading(ctx)) this._reloadConfig();
+        if (group.members.size === 0) {
+          SETTINGS_GROUPS.delete(group.root);
+        } else if (wasOwner) {
+          queueMicrotask(() => promoteSettingsOwner(group));
+        }
+      };
+      scoped.effect(() => detachMember);
+      stopSettingsUpdates = scoped.on("settings/updated", (namespace) => {
+        if (group.owner === null && namespace === InstantCompactionEngine.SETTINGS_NAMESPACE) reloadSettingsGroup(group);
       });
-      this._reloadConfig();
-      scope.watch(() => {
-        this.source = () => ({ ...entry, ...scope.get() });
+      try {
+        const existing = scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE);
+        if (group.current === undefined && existing !== undefined) {
+          group.current = () => scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE) ?? {};
+        }
+        this.source = () => mergeSettingsFields(entry, group.current?.() ?? {});
         this._reloadConfig();
-      });
+        if (existing === undefined && group.owner === null) installSettingsOwner(group, member);
+      } catch (error) {
+        detachMember();
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.logger.warn(`compaction-instant: shared settings are incompatible with this preset entry; continuing composition-only (${message})`);
+      }
     });
   }
   /** Register or dispose the automatic-compaction listeners with the `auto` flag. */
@@ -611,8 +732,8 @@ export class InstantCompactionEngine extends CompactionEngine {
    */  async compile(prepared, agent, signal) {
     signal?.throwIfAborted();
     const nodes = prepared.shadowedSeqs.map((seq) => {
-      const event = prepared.session.events[seq];
-      if (event === undefined || event.seq !== seq) throw new Error(`compaction: surface seq ${seq} has no matching session event (corrupt surface)`);
+      const event = prepared.session.eventAt(seq);
+      if (event === undefined) throw new Error(`compaction: surface seq ${seq} has no matching session event (corrupt surface)`);
       return {
         seq,
         message: prepared.session.deriveEventMessage(event)
@@ -623,7 +744,7 @@ export class InstantCompactionEngine extends CompactionEngine {
     // elided under cap pressure, so the agent can recall the dropped layer.
     const checkpointOrdinals = new Map();
     let checkpointCount = 0;
-    for (const event of prepared.session.events) {
+    for (const event of prepared.session.snapshotEvents()) {
       if (event.type === "user/message" && isCheckpointSource(event.data?.source)) {
         checkpointCount += 1;
         checkpointOrdinals.set(event.seq, checkpointCount);
@@ -643,6 +764,21 @@ export class InstantCompactionEngine extends CompactionEngine {
       provider: COMPILER_PROVIDER,
       model: COMPILER_MODEL
     };
+  }
+  /** Resolve the configured target-specific retention policy for manual compaction. */
+  async _manualRetention(agent, signal) {
+    const target = conversationTarget(agent);
+    if (target === undefined) {
+      if (this.config.retainTokens !== undefined) return { retainTurns: this.config.retainTurns, retainTokens: this.config.retainTokens };
+      throw new TargetPressureConfigError("<unrouted>", "compaction-instant: retainRatio requires a routed request or AgentOptions provider/model");
+    }
+    const policy = resolveTargetPolicy(this.config, target);
+    if (policy.retainTokens !== undefined) return { retainTurns: policy.retainTurns, retainTokens: policy.retainTokens };
+    const context = (await this.ctx.llm.resolveModelInfo(target.provider, target.model, signal)).context;
+    const targetKey = `${target.provider}/${target.model}`;
+    if (context === undefined) throw new TargetPressureConfigError(targetKey, `compaction-instant: no context capacity for ${targetKey}; configure contextWindow on that adapter model`);
+    const spec = resolveCompactSpec(policy, context.contextWindow);
+    return { retainTurns: spec.retainTurns, retainTokens: spec.retainTokens };
   }
   /**
    * Compact for replayed step-boundary pressure or one provider-confirmed
@@ -732,8 +868,9 @@ export class InstantCompactionEngine extends CompactionEngine {
         const operationSignal = AbortSignal.any([agentSignal, signal]);
         try {
           operationSignal.throwIfAborted();
+          const retention = await this._manualRetention(agent, operationSignal);
           const measurement = this.ctx.tokenMeter.measure(agent.session);
-          const range = selectCompactableRange(agent.session, measurement, this.config.retainTurns, this.config.retainTokens);
+          const range = selectCompactableRange(agent.session, measurement, retention.retainTurns, retention.retainTokens);
           if (range === null) return null;
           return await compactSurfaceRegion(this.regionDependencies(), agent.session, range.start, range.end, agent, {
             owner: null,

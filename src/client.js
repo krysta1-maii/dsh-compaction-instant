@@ -9,8 +9,8 @@
  * names: the alias name used by drop-in deployments
  * (`@deepseek-ai/dsh-compaction-basic` — web profiles alias the official
  * package to this one so bundled agent presets keep resolving) and the real
- * package name. Exactly one of the two is required by the boot graph; the
- * other registration is inert.
+ * unscoped package name. Exactly one of the two is required by the boot graph;
+ * the other registration is inert.
  *
  * No TypeScript/JSX/bundler transforms run on this file.
  */
@@ -20,7 +20,7 @@ function instantCompactionClientFactory(require) {
   Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 
   var React = require("react");
-  var { createSnapshotStore } = require("@deepseek-ai/dsh-client-runtime/client");
+  var { createSnapshotStore } = require("@deepseek-ai/dsh-client-store");
 
   // ── styles (injected once per page, matching the official cards' tokens) ──
   var css = [
@@ -86,6 +86,8 @@ function instantCompactionClientFactory(require) {
     thresholdRatioHint: "上下文窗口占用达到此比例时触发自动压缩（默认 0.5）。",
     retainTurns: "保留回合数",
     retainTurnsHint: "优先保留最近 N 个完整回合（默认 1）。",
+    retainRatio: "保留上下文比例",
+    retainRatioHint: "兼容 compaction-basic：按模型上下文窗口比例计算保留上限。",
     retainTokens: "保留 token 上限",
     retainTokensHint: "保留区 token 硬上限：补足回合时永不超出；若最近回合本身就超过它，只保留其中能装下的部分（默认 5120）。",
     overridden: "已覆盖",
@@ -111,6 +113,8 @@ function instantCompactionClientFactory(require) {
     thresholdRatioHint: "Triggers automatic compaction at this fraction of the context window (default 0.5).",
     retainTurns: "Retained turns",
     retainTurnsHint: "Prefer the last N complete turns (default 1).",
+    retainRatio: "Retained context ratio",
+    retainRatioHint: "compaction-basic compatibility: derive the retained ceiling from the model context window.",
     retainTokens: "Retained-token ceiling",
     retainTokensHint: "Hard ceiling for the retained region: turn extension never exceeds it, and if the latest turn alone is bigger, only the part of it that fits is kept (default 5120).",
     overridden: "Overridden",
@@ -185,7 +189,7 @@ function instantCompactionClientFactory(require) {
         available: snapshot.status === "ready",
         writable: snapshot.writable,
         dirty: plan.length > 0,
-        invalid: plan.some(function (item) { return item.run === void 0; }),
+        invalid: plan.some(function (item) { return item.op === void 0; }),
         saving: this.saving,
         failed: this.failed
       };
@@ -235,14 +239,14 @@ function instantCompactionClientFactory(require) {
         var staged = entry[1];
         var spec = this.specs.get(field);
         if (staged.clear) {
-          if (this.stored(field)) plan.push({ field: field, run: (function (self, f) { return function () { return self.clear(f); }; })(this, field) });
+          if (this.stored(field)) plan.push({ field: field, op: { op: "unset", path: [field] } });
           continue;
         }
         if (staged.text === spec.format(this.sectionValue(field))) continue;
         var write = spec.parse(staged.text);
-        if (write === void 0) plan.push({ field: field, run: void 0 });
-        else if (write.kind === "clear") plan.push({ field: field, run: (function (self, f) { return function () { return self.clear(f); }; })(this, field) });
-        else plan.push({ field: field, run: (function (self, f, v) { return function () { return self.store(f, v); }; })(this, field, write.value) });
+        if (write === void 0) plan.push({ field: field, op: void 0 });
+        else if (write.kind === "clear") plan.push({ field: field, op: { op: "unset", path: [field] } });
+        else plan.push({ field: field, op: { op: "set", path: [field], value: write.value } });
       }
       return plan;
     };
@@ -266,39 +270,29 @@ function instantCompactionClientFactory(require) {
       var user = this.userLayer();
       return user !== void 0 && Object.prototype.hasOwnProperty.call(user, field);
     };
-    CardController.prototype.clear = function (field) {
-      var self = this;
-      return this.scope.unset(field).then(function () { return !self.stored(field); });
-    };
-    CardController.prototype.store = function (field, value) {
-      var self = this;
-      return this.scope.set(field, value).then(function () {
-        var user = self.userLayer();
-        return user !== void 0 && user[field] === value;
-      });
-    };
-    /** Write every staged edit, then re-read what the Host accepted. */
+    /** Write every staged edit atomically, then re-read what the Host accepted. */
     CardController.prototype.save = function () {
       var self = this;
       var plan = this.plan();
-      var writes = [];
-      for (var _i = 0; _i < plan.length; _i++) {
-        var item = plan[_i];
-        if (item.run !== void 0) writes.push(item.run);
-      }
-      if (plan.length === 0 || this.saving || writes.length !== plan.length) return;
+      var operations = plan.map(function (item) { return item.op; });
+      if (plan.length === 0 || this.saving || operations.some(function (op) { return op === void 0; })) return;
       this.saving = true;
       this.failed = false;
       this.publish();
-      var landed = true;
-      var settle = Promise.resolve();
-      for (var _a = 0; _a < writes.length; _a++) {
-        settle = settle.then(writes[_a]).then(function (ok) { landed = ok && landed; });
-      }
-      settle.then(function () {
+      var expectedRevision = this.scope.getSnapshot().revision;
+      this.scope.mutate(operations, expectedRevision).then(function () {
+        var user = self.userLayer();
+        var landed = plan.every(function (item) {
+          if (item.op.op === "unset") return user === void 0 || !Object.prototype.hasOwnProperty.call(user, item.field);
+          return user !== void 0 && user[item.field] === item.op.value;
+        });
         if (landed) self.staged.clear();
         self.saving = false;
         self.failed = !landed;
+        self.publish();
+      }, function () {
+        self.saving = false;
+        self.failed = true;
         self.publish();
       });
     };
@@ -390,6 +384,7 @@ function instantCompactionClientFactory(require) {
     var t = props.t;
     if (!state.available) return null;
     var blocked = !state.dirty || state.invalid || state.saving;
+    var ratioMode = state.retainRatio.text !== "" && state.retainTokens.text === "";
     return React.createElement(
       "li",
       { className: "dsci_card" + (isOpen ? " dsci_cardOpen" : "") },
@@ -467,19 +462,33 @@ function instantCompactionClientFactory(require) {
               onEdit: function (text) { props.edit("retainTurns", text); },
               onReset: function () { props.resetField("retainTurns"); }
             }),
-            React.createElement(ValueField, {
-              id: "plugin-config-instant-retain-tokens",
-              label: t("retainTokens"),
-              hint: t("retainTokensHint"),
-              overriddenLabel: t("overridden"),
-              resetLabel: t("reset"),
-              invalidLabel: t("invalidNumber"),
-              numeric: true,
-              disabled: !state.writable,
-              ...state.retainTokens,
-              onEdit: function (text) { props.edit("retainTokens", text); },
-              onReset: function () { props.resetField("retainTokens"); }
-            }),
+            ratioMode
+              ? React.createElement(ValueField, {
+                  id: "plugin-config-instant-retain-ratio",
+                  label: t("retainRatio"),
+                  hint: t("retainRatioHint"),
+                  overriddenLabel: t("overridden"),
+                  resetLabel: t("reset"),
+                  invalidLabel: t("invalidNumber"),
+                  numeric: true,
+                  disabled: !state.writable,
+                  ...state.retainRatio,
+                  onEdit: function (text) { props.edit("retainRatio", text); },
+                  onReset: function () { props.resetField("retainRatio"); }
+                })
+              : React.createElement(ValueField, {
+                  id: "plugin-config-instant-retain-tokens",
+                  label: t("retainTokens"),
+                  hint: t("retainTokensHint"),
+                  overriddenLabel: t("overridden"),
+                  resetLabel: t("reset"),
+                  invalidLabel: t("invalidNumber"),
+                  numeric: true,
+                  disabled: !state.writable,
+                  ...state.retainTokens,
+                  onEdit: function (text) { props.edit("retainTokens", text); },
+                  onReset: function () { props.resetField("retainTokens"); }
+                }),
             React.createElement(
               "div",
               { className: "dsci_footer" },
@@ -516,6 +525,7 @@ function instantCompactionClientFactory(require) {
       booleanField("auto"),
       numberField("thresholdRatio"),
       numberField("retainTurns"),
+      numberField("retainRatio"),
       numberField("retainTokens")
     ]);
     var store = controller.bind(function () {
@@ -526,6 +536,7 @@ function instantCompactionClientFactory(require) {
         auto: controller.field("auto"),
         thresholdRatio: controller.field("thresholdRatio"),
         retainTurns: controller.field("retainTurns"),
+        retainRatio: controller.field("retainRatio"),
         retainTokens: controller.field("retainTokens")
       };
     });
@@ -552,10 +563,6 @@ function instantCompactionClientFactory(require) {
 
 window.__ModuleLoader__.load({
   id: "@deepseek-ai/dsh-compaction-basic",
-  factory: instantCompactionClientFactory
-});
-window.__ModuleLoader__.load({
-  id: "@deepseek-ai/dsh-compaction-instant",
   factory: instantCompactionClientFactory
 });
 window.__ModuleLoader__.load({

@@ -55,14 +55,13 @@ export function searchSession(session, patternSource, config) {
   const pattern = compileSearchPattern(patternSource);
   const maxHits = config.maxSearchHits;
   const maxTokens = config.maxRecallTokens;
-  const events = session.events;
+  const events = session.snapshotEvents();
   const hits = [];
   let totalMatches = 0;
   let budget = maxTokens;
   let truncated = false;
-  for (let seq = 0; seq < events.length; seq += 1) {
-    const event = events[seq];
-    if (event === undefined || event.seq !== seq) continue;
+  for (const event of events) {
+    const seq = event.seq;
     const message = typeof session.deriveEventMessage === "function" ? session.deriveEventMessage(event) : null;
     const body = message !== null
       ? projectMessageText(message)

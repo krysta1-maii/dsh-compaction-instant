@@ -319,7 +319,7 @@ test("recall command appends a form:recall user message with search hits", async
   });
   assert.equal(result.kind, "success");
   assert.match(result.text, /Found 2 matching event\(s\)/);
-  const appended = session.events[result.sourceEventSeq];
+  const appended = session.eventAt(result.sourceEventSeq);
   assert.equal(appended.type, "user/message");
   assert.equal(appended.data.source.kind, "plugin");
   assert.equal(appended.data.source.plugin, "recall");
@@ -334,7 +334,7 @@ test("recall command appends a form:recall user message with search hits", async
 test("recall command rejects invalid input and no-hit searches without appending", async () => {
   const session = makeIdleSession();
   const command = defineRecallCommand(resolveCommandConfig({}));
-  const before = session.events.length;
+  const before = session.seq;
   const empty = await command.handler({
     agent: idleAgent(session),
     rawInput: "",
@@ -359,7 +359,7 @@ test("recall command rejects invalid input and no-hit searches without appending
   });
   assert.equal(none.kind, "error");
   assert.match(none.text, /No matching events/);
-  assert.equal(session.events.length, before);
+  assert.equal(session.seq, before);
 });
 
 test("recall command maps maintenance conflicts to an error result", async () => {
@@ -434,7 +434,7 @@ test("recall and search restore the exact originals after compaction", async () 
       surfaceDeltaTokens: 0,
       totalTokens: 0,
       surfaceTokens: 0,
-      nodes: target.surface.nodes.map((seq) => ({ seq, tokens: 100 }))
+      nodes: target.surface.nodes.map((seq) => ({ seq, tokens: 100, heuristicTokens: 100 }))
     }),
     estimateMessage: (message) => message.content.reduce((total, block) => total + Math.ceil((block.text?.length ?? 0) / 4), 0)
   });

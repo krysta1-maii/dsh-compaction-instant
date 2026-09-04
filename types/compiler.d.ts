@@ -82,12 +82,15 @@ export declare const COMPILER_REV: string;
 export declare function joinCompiledEntries(entries: readonly (string | { seq: number; text: string; kind?: string })[]): string;
 
 export declare function tokenize(text: string): string[];
+export declare function isCjkChar(char: string): boolean;
+export declare function estimateDeepSeekTokens(text: string): number;
 export declare function countTokens(text: string): number;
 export declare function estimateEntryTokens(text: string): number;
 export declare function sanitize(text: unknown): string;
 export declare function truncateTokens(text: string, limit: number, ref?: string): { text: string; truncated: boolean };
 export declare function compileNoisePatterns(sources: readonly string[]): RegExp[];
 export declare function stripNoiseXml(text: string, patterns: readonly RegExp[]): string;
+export declare function oneLineArg(value: unknown): string;
 export declare function pickToolKeyArg(name: string, input: unknown, keyFields: Record<string, string>): string | undefined;
 export declare function parseToolArguments(argumentsRaw: string): unknown;
 export declare function projectToolResultText(blocks: readonly unknown[]): string;
@@ -96,7 +99,7 @@ export declare function excerptToolResult(text: string, budget: number, ref: str
 export declare function entryText(entry: string | CompileEntry): string;
 export declare function compileNodes(nodes: readonly CompileNode[], config: CompilerConfig, budgets?: CompileBudgets): { entries: CompileEntry[]; stats: CompileStats };
 export declare function compileRegion(nodes: readonly CompileNode[], config: CompilerConfig): { entries: CompileEntry[]; stats: CompileStats; capped: boolean };
-export declare function frameCheckpoint(entries: readonly (string | CompileEntry)[], headerLine?: string): { type: 'text'; text: string }[];
+export declare function frameCheckpoint(entries: readonly (string | CompileEntry)[], headerLine?: string, introLine?: string, footerLine?: string): { type: 'text'; text: string }[];
 export declare const CHECKPOINT_PREAMBLE: string;
 export declare const CHECKPOINT_OPEN_TAG: string;
 export declare const CHECKPOINT_CLOSE_TAG: string;

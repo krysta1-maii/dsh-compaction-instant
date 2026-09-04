@@ -39,7 +39,7 @@ export class SurfaceChangedError extends Error {}
 function surfaceTurns(session, surfaceNodes) {
   const turnOfSeq = new Map();
   let turn = 0;
-  for (const event of session.events ?? []) {
+  for (const event of session.snapshotEvents()) {
     if (event.type === "turn/start") turn = event.data.turn;
     turnOfSeq.set(event.seq, turn);
   }
@@ -152,7 +152,7 @@ export function selectCompactableRange(session, measurement, retainTurns, retain
 export async function compactSurfaceRegion(dependencies, session, start, end, agent, options, signal) {
   if (options.owner === null) signal?.throwIfAborted();
   const selection = validateSurfaceRegion(session, start, end);
-  const entryState = inspectCompactionEntryState(session.events);
+  const entryState = inspectCompactionEntryState(session);
   assertCompactionInactive(entryState.unmatchedCompactionStart, entryState.latestEndSeedSeq, "compaction");
   let owner;
   if (options.owner === null) {
@@ -249,7 +249,7 @@ function assertCompactionInactive(unmatchedCompactionStart, latestEndSeedSeq, st
  * @param stage - operation label included in the busy diagnostic.
  */
 export function assertNoActiveCompaction(session, stage) {
-  const entryState = inspectCompactionEntryState(session.events);
+  const entryState = inspectCompactionEntryState(session);
   assertCompactionInactive(entryState.unmatchedCompactionStart, entryState.latestEndSeedSeq, stage);
 }
 
@@ -282,7 +282,10 @@ export function prepareCompaction(dependencies, session, selection) {
     session,
     measurement,
     selectedNodes,
-    shadowedTokenCount: selectedNodes.reduce((total, node) => total + node.tokens, 0)
+    // DSH 0.1.2 splits route-priced request pressure from the fixed
+    // heuristic used by the durable shadow-price projection.
+    shadowedTokenCount: selectedNodes.reduce((total, node) => total + node.heuristicTokens, 0),
+    shadowedRouteTokenCount: selectedNodes.reduce((total, node) => total + node.tokens, 0)
   };
 }
 
@@ -325,7 +328,7 @@ async function compileCompaction(dependencies, prepared, agent, compactionId, so
     source: compactCheckpointSource(compactionId, sourceCommandId)
   });
   const framedTokenCount = dependencies.meter.estimateMessage(checkpointMessage);
-  if (framedTokenCount >= prepared.shadowedTokenCount) throw new Error(`compiled checkpoint is not smaller than the shadowed content (${framedTokenCount} estimated framed tokens >= ${prepared.shadowedTokenCount})`);
+  if (framedTokenCount >= prepared.shadowedRouteTokenCount) throw new Error(`compiled checkpoint is not smaller than the shadowed content (${framedTokenCount} estimated framed tokens >= ${prepared.shadowedRouteTokenCount})`);
   return {
     ...prepared,
     summary,
@@ -424,14 +427,15 @@ function completeCompaction(pending, endEvent) {
 }
 
 /** Inspect open-turn, unmatched-compaction, and latest seed-boundary state independently. */
-export function inspectCompactionEntryState(events) {
+export function inspectCompactionEntryState(session) {
   let openTurn = null;
   let openTurnStateKnown = false;
   let unmatchedCompactionStart;
   let compactionEntryStateKnown = false;
   let latestEndSeedSeq;
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index];
+  for (let seq = session.seq - 1; seq >= 0; seq -= 1) {
+    const event = session.eventAt(seq);
+    if (event === undefined) throw new Error(`compaction: session event ${seq} is missing (corrupt log)`);
     if (latestEndSeedSeq === undefined && event.type === "session/end-seed") latestEndSeedSeq = event.seq;
     if (!compactionEntryStateKnown) {
       if (event.type === "compaction/start") {

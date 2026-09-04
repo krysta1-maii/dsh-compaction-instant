@@ -53,7 +53,7 @@ test("compile() compiles a real session deterministically with seq provenance", 
   const session = makeIdleSession();
   const ctx = new Context();
   ctx.provide("tokenMeter", {
-    measure: () => ({ nodes: session.surface.nodes.map((seq) => ({ seq, tokens: 100 })) }),
+    measure: () => ({ nodes: session.surface.nodes.map((seq) => ({ seq, tokens: 100, heuristicTokens: 100 })) }),
     estimateMessage: () => 10
   });
   const engine = new InstantCompactionEngine(ctx, {
@@ -155,6 +155,58 @@ test("compile() caps the checkpoint at checkpointCap", async () => {
   assert.equal(result.capped, false);
 });
 
+test("compactNow resolves retainRatio against the routed model context", async () => {
+  const session = makeIdleSession();
+  const ctx = new Context();
+  let resolvedRoute;
+  let flushes = 0;
+  ctx.provide("llm", {
+    resolveModelInfo: async (provider, model) => {
+      resolvedRoute = { provider, model };
+      session.append(
+        "user/message",
+        createUserMessage({ content: [{ type: "text", text: "queued context" }], source: { kind: "user" } }),
+        { surfaceOp: "append" }
+      );
+      return { provider, model, context: { contextWindow: 500 } };
+    }
+  });
+  ctx.provide("tokenMeter", {
+    measure: (target) => ({
+      logRevision: 0,
+      baseline: { kind: "none", tokens: 0 },
+      surfaceDeltaTokens: 0,
+      totalTokens: target.surface.nodes.length * 100,
+      surfaceTokens: target.surface.nodes.length * 100,
+      nodes: target.surface.nodes.map((seq) => ({ seq, tokens: 100, heuristicTokens: 100 }))
+    }),
+    estimateMessage: () => 10
+  });
+  ctx.provide("sessions", {
+    flush: async () => {
+      flushes += 1;
+    }
+  });
+  const engine = new InstantCompactionEngine(ctx, {
+    auto: false,
+    retainTokens: 200,
+    modelPolicies: [{ provider: "p", model: "m", retainRatio: 0.2 }],
+    textTokens: 64,
+    userTextTokens: 64,
+    toolCallTokens: 32
+  });
+  const agent = {
+    session,
+    options: { provider: "p", model: "m" },
+    runMaintenance: (task) => task(new AbortController().signal)
+  };
+  const result = await engine.compactNow(agent, new AbortController().signal);
+  assert.deepEqual(resolvedRoute, { provider: "p", model: "m" });
+  assert.ok(result !== null);
+  assert.equal(flushes, 1);
+  assert.deepEqual(result.shadowedSeqs, [1, 2, 3, 4, 5]);
+});
+
 test("engine regionDependencies drive a real manual transaction end-to-end", async () => {
   const session = makeIdleSession();
   const ctx = new Context();
@@ -165,7 +217,7 @@ test("engine regionDependencies drive a real manual transaction end-to-end", asy
       surfaceDeltaTokens: 0,
       totalTokens: 0,
       surfaceTokens: 0,
-      nodes: target.surface.nodes.map((seq) => ({ seq, tokens: 100 }))
+      nodes: target.surface.nodes.map((seq) => ({ seq, tokens: 100, heuristicTokens: 100 }))
     }),
     estimateMessage: (message) => message.content.reduce((total, block) => total + Math.ceil((block.text?.length ?? 0) / 4), 0)
   });
@@ -182,10 +234,10 @@ test("engine regionDependencies drive a real manual transaction end-to-end", asy
     stability: "selected-span"
   }, undefined);
   assert.deepEqual(result.shadowedSeqs, [1, 2, 3, 4]);
-  const summaryEvent = session.events[result.summarySeq];
+  const summaryEvent = session.eventAt(result.summarySeq);
   assert.equal(summaryEvent.data.provider, "dsh-compaction-instant");
   assert.equal(summaryEvent.data.model, "vcc-compiler");
-  const checkpoint = session.events[result.summarySeq + 1];
+  const checkpoint = session.eventAt(result.summarySeq + 1);
   assert.equal(checkpoint.data.source.plugin, "compact");
   const text = checkpoint.data.content.map((block) => block.text).join("\n");
   assert.match(text, /<compacted-checkpoint>/);

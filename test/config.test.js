@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync, rmSync } from "node:fs";
 import { compileNoisePatterns, DEFAULT_ARG_TOOLS, DEFAULT_NOISE_PATTERNS } from "../src/compiler.js";
-import { resolveCompactSpec, resolveConfig, resolveTargetPolicy, TargetPressureConfigError } from "../src/index.js";
+import { InstantCompactionEngine, resolveCompactSpec, resolveConfig, resolveTargetPolicy, TargetPressureConfigError } from "../src/index.js";
 
 test("resolveConfig applies the documented defaults", () => {
   const config = resolveConfig({});
@@ -29,7 +29,6 @@ test("resolveConfig applies the documented defaults", () => {
 
 test("resolveConfig rejects unknown keys", () => {
   assert.throws(() => resolveConfig({ textToken: 1 }), /unknown key "textToken"/);
-  assert.throws(() => resolveConfig({ retainRatio: 0.05 }), /unknown key "retainRatio"/);
   assert.throws(() => resolveConfig({ manualRetainRatio: 0.05 }), /unknown key "manualRetainRatio"/);
   assert.throws(() => resolveConfig({ manualRetainTokens: 100 }), /unknown key "manualRetainTokens"/);
 });
@@ -41,6 +40,13 @@ test("resolveConfig validates ratios, term retention, and threshold", () => {
   assert.throws(() => resolveConfig({ retainTurns: 1.5 }), /retainTurns/);
   assert.throws(() => resolveConfig({ retainTokens: -1 }), /retainTokens/);
   assert.throws(() => resolveConfig({ retainTokens: 1.5 }), /retainTokens/);
+  assert.throws(() => resolveConfig({ retainRatio: 0 }), /retainRatio/);
+  assert.throws(() => resolveConfig({ retainRatio: 0.5 }), /less than.*thresholdRatio/);
+  assert.throws(() => resolveConfig({ retainRatio: 0.1, retainTokens: 100 }), /mutually exclusive/);
+  assert.equal(InstantCompactionEngine.Config({ retainRatio: 0.1 }).retainRatio, 0.1);
+  const ratio = resolveConfig({ retainRatio: 0.1 });
+  assert.equal(ratio.retainRatio, 0.1);
+  assert.equal(ratio.retainTokens, undefined);
 });
 
 test("resolveConfig validates compiler budgets and flags", () => {
@@ -111,7 +117,8 @@ test("resolveConfig validates the inert summarization pair for drop-in parity", 
 
 test("resolveConfig validates modelPolicies and rejects duplicates", () => {
   assert.throws(() => resolveConfig({ modelPolicies: [{ provider: "p" }] }), /modelPolicies\[0\]/);
-  assert.throws(() => resolveConfig({ modelPolicies: [{ provider: "p", model: "m", retainRatio: 0.9 }] }), /modelPolicies\[0\].*unknown key "retainRatio"/);
+  assert.throws(() => resolveConfig({ modelPolicies: [{ provider: "p", model: "m", retainRatio: 0.9 }] }), /retainRatio.*less than.*thresholdRatio/);
+  assert.throws(() => resolveConfig({ modelPolicies: [{ provider: "p", model: "m", retainRatio: 0.1, retainTokens: 100 }] }), /mutually exclusive/);
   assert.throws(() => resolveConfig({
     modelPolicies: [
       { provider: "p", model: "m" },
@@ -133,6 +140,13 @@ test("resolveTargetPolicy overlays exact-target fields over defaults", () => {
   assert.equal(targeted.thresholdRatio, 0.9);
   assert.equal(targeted.retainTurns, 5);
   assert.equal(targeted.retainTokens, 9000);
+  const ratioOverride = resolveConfig({
+    retainTokens: 4000,
+    modelPolicies: [{ provider: "p", model: "m", retainRatio: 0.2 }]
+  });
+  const ratioTarget = resolveTargetPolicy(ratioOverride, { provider: "p", model: "m" });
+  assert.equal(ratioTarget.retainRatio, 0.2);
+  assert.equal(ratioTarget.retainTokens, undefined);
 });
 
 test("resolveCompactSpec scales budgets and rejects invalid windows", () => {
@@ -146,4 +160,6 @@ test("resolveCompactSpec scales budgets and rejects invalid windows", () => {
   const scaled = resolveCompactSpec(configured, 1000);
   assert.equal(scaled.retainTurns, 2);
   assert.equal(scaled.retainTokens, 4000);
+  const ratioPolicy = resolveTargetPolicy(resolveConfig({ retainRatio: 0.2 }), { provider: "p", model: "m" });
+  assert.equal(resolveCompactSpec(ratioPolicy, 10000).retainTokens, 2000);
 });

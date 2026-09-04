@@ -9,6 +9,8 @@ import type { CommandDefinition } from '@deepseek-ai/dsh-commands';
 export declare const name: 'command-recall';
 /** Service required before the companion can register. */
 export declare const inject: string[];
+/** Stable usage text returned for an empty command. */
+export declare const USAGE: string;
 /** Command plugin configuration. */
 export interface CommandRecallConfig {
     /** Total budget for one search result, in density-aware tokens. Default 16000. */

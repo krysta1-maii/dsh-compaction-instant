@@ -2,6 +2,7 @@
  * Same-session recall core types for dsh-compaction-instant.
  * @module dsh-compaction-instant/recall
  */
+import type { Session } from '@deepseek-ai/dsh-session';
 
 /** Default total budget for one recall operation, in density-aware tokens. */
 export declare const DEFAULT_MAX_RECALL_TOKENS: number;
@@ -41,11 +42,8 @@ export interface RecallResult {
     tokens: number;
 }
 
-/** Session-shaped value recall reads from. */
-export interface RecallableSession {
-    events: readonly { seq: number; type: string; data: unknown }[];
-    deriveEventMessage?(event: unknown): { role: 'system' | 'user' | 'assistant'; content: readonly unknown[] } | null;
-}
+/** Session-shaped value recall reads from through DSH 0.1.2 immutable log APIs. */
+export type RecallableSession = Pick<Session, 'snapshotEvents' | 'eventAt' | 'deriveEventMessage'>;
 
 /** Parse one seq selection string into ordered inclusive ranges. */
 export declare function parseSeqSpec(input: string): { selections: SeqSelection[]; errors: string[] };

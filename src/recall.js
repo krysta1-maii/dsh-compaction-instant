@@ -8,9 +8,9 @@
  * ever truncated or elided is still present and recoverable — recall closes
  * the loop that makes the compaction engine near-lossless.
  *
- * Shared by the model-facing `recall` tool (`./tool`). Reads any session-shaped
- * value with `events` and `deriveEventMessage`, so it is unit-testable without
- * a running harness.
+ * Shared by the model-facing `recall` tool (`./tool`). Reads the DSH 0.1.2
+ * immutable log APIs (`snapshotEvents`, `eventAt`, `deriveEventMessage`), so a
+ * small session-shaped fixture can still exercise it without a running harness.
  *
  * @module dsh-compaction-instant/recall
  */
@@ -118,12 +118,12 @@ export function expandSelections(selections) {
  * Collect the durable seqs of every landed compaction checkpoint node in one
  * session, oldest first. Each compaction replaces its span with exactly one
  * checkpoint node, so the ordinal (`1` = oldest) counts compactions.
- * @param session - session-shaped value with `events`.
+ * @param session - session-shaped value exposing the immutable DSH log API.
  * @returns checkpoint node seqs in chronological order.
  */
 export function findCheckpointSeqs(session) {
   const seqs = [];
-  for (const event of session.events) {
+  for (const event of session.snapshotEvents()) {
     if (event.type === "user/message" && isCheckpointSource(event.data?.source)) seqs.push(event.seq);
   }
   return seqs;
@@ -141,7 +141,7 @@ export function findCheckpointSeqs(session) {
  *     as in the `[checkpoint N]` elision marker) or a `seq N` pointer to a
  *     checkpoint node.
  *
- * @param session - session-shaped value with `events` and `deriveEventMessage`.
+ * @param session - session-shaped value exposing immutable log access and message projection.
  * @param type - reference type: `seq`, `result`, or `checkpoint`.
  * @param id - type-dependent reference text.
  * @returns `{ selections, errors }`; errors are stable human-readable strings.
@@ -154,8 +154,8 @@ export function resolveRecallReference(session, type, id) {
     const match = /^(\d+)$/u.exec(token);
     if (match === null) return { selections: [], errors: [`invalid result reference "${id}" (expected a seq like "3" or "result 3")`] };
     const seq = Number(match[1]);
-    const event = session.events[seq];
-    if (event === undefined || event.seq !== seq) return { selections: [], errors: [`result seq ${seq} not found in this session`] };
+    const event = session.eventAt(seq);
+    if (event === undefined) return { selections: [], errors: [`result seq ${seq} not found in this session`] };
     if (event.type !== "tool/result") return { selections: [], errors: [`seq ${seq} is not a tool result (it is ${event.type})`] };
     return { selections: [{ start: seq, end: seq }], errors: [] };
   }
@@ -164,8 +164,8 @@ export function resolveRecallReference(session, type, id) {
     const bySeq = /^seqs?\s+(\d+)$/iu.exec(token);
     if (bySeq !== null) {
       const seq = Number(bySeq[1]);
-      const event = session.events[seq];
-      if (event === undefined || event.seq !== seq) return { selections: [], errors: [`checkpoint seq ${seq} not found in this session`] };
+      const event = session.eventAt(seq);
+      if (event === undefined) return { selections: [], errors: [`checkpoint seq ${seq} not found in this session`] };
       if (!isCheckpointSource(event.data?.source)) return { selections: [], errors: [`seq ${seq} is not a checkpoint node`] };
       return { selections: [{ start: seq, end: seq }], errors: [] };
     }
@@ -188,7 +188,7 @@ export function resolveRecallReference(session, type, id) {
  * events render as a labeled data dump. The total output is bounded by
  * `config.maxRecallTokens`; a cut appends a provenance marker and remaining
  * requested seqs are accounted in `skipped`.
- * @param session - session-shaped value with `events` and `deriveEventMessage`.
+ * @param session - session-shaped value exposing immutable log access and message projection.
  * @param selections - parsed inclusive ranges.
  * @param config - `{ maxRecallTokens }`.
  * @returns `{ text, entries, seqs, recalled, missing, skipped, truncated, tokens }`.
@@ -209,8 +209,8 @@ export function recallSession(session, selections, config) {
       truncated = true;
       break;
     }
-    const event = session.events[seq];
-    if (event === undefined || event.seq !== seq) {
+    const event = session.eventAt(seq);
+    if (event === undefined) {
       missing += 1;
       entries.push({ seq, text: `[seq ${seq}: not found in this session]` });
       continue;

@@ -2,6 +2,7 @@
  * Keyword/regex search over the durable session log types.
  * @module dsh-compaction-instant/search
  */
+import type { Session } from '@deepseek-ai/dsh-session';
 
 /** Default cap on the number of matching events shown in one result. */
 export declare const DEFAULT_MAX_SEARCH_HITS: number;
@@ -39,11 +40,8 @@ export interface SearchResult {
     text: string;
 }
 
-/** Session-shaped value search reads from. */
-export interface SearchableSession {
-    events: readonly { seq: number; type: string; data: unknown }[];
-    deriveEventMessage?(event: unknown): { role: string; content: readonly unknown[] } | null;
-}
+/** Session-shaped value search reads from through DSH 0.1.2 immutable log APIs. */
+export type SearchableSession = Pick<Session, 'snapshotEvents' | 'deriveEventMessage'>;
 
 /** Compile one search pattern (case-insensitive, Unicode-aware regex). */
 export declare function compileSearchPattern(source: unknown): RegExp;

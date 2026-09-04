@@ -9,7 +9,15 @@
 - **免 LLM**——压缩过程完全不调用模型：没有摘要请求、没有推理等待、不花 token。它只是确定性的文本处理，哪怕一百万个 token 的历史也是毫秒级搞定。
 - **近无损**——存档里只有原文；每处被省略的内容都有标记并注明出处（`seq` 序号），之前的存档会原封不动地保留。
 - **即时**——把旧内容扫描一遍就完成；不联网、不调模型、不占 KV 缓存。
-- **完全兼容的替换**——对外接口、事件、计费和报错方式都和官方引擎一致；内置预设不用改任何东西就能用（见"别名安装"）。
+- **完全兼容的替换**——对外接口、事件、计费和报错方式都和官方引擎一致；带压缩组的内置预设不用改任何东西就能用（见“别名安装”）。
+
+## 兼容性
+
+| dsh-compaction-instant | DeepSeek Harness | Node.js |
+|---|---|---|
+| `0.1.5` | `0.1.2-rc.1` | `>=22.12.0` |
+
+0.1.5 使用 DSH 0.1.2-rc.1 引入的不可变 `Session.eventAt()` / `snapshotEvents()`、双价格 token-meter 协议和预设层压缩架构；本版本不再支持更早的 Harness 预发布版。
 
 ## 示例
 
@@ -50,7 +58,8 @@ Recall 能取回**一切**：文本、推理过程、工具调用的完整参数
 |---|---|---|
 | `thresholdRatio` | `0.5` | 上下文用到多大比例时自动触发压缩（0.5 = 用到一半） |
 | `retainTurns` | `1` | 优先保留的完整回合数（自动压缩和手动 `/compact` 都按此规则；不突破上限） |
-| `retainTokens` | `5120` | 保留区 token **硬上限**：向前补足完整回合时总量永不超出；若最近回合本身就超过它，只保留该回合内能装下的部分 |
+| `retainRatio` | — | 兼容 `compaction-basic`：按路由模型上下文窗口比例计算保留上限；与 `retainTokens` 互斥，且必须小于 `thresholdRatio` |
+| `retainTokens` | `5120` | 保留区 token **硬上限**：向前补足完整回合时总量永不超出；若最近回合本身就超过它，只保留该回合内能装下的部分；与 `retainRatio` 互斥 |
 | `auto` | `true` | 开启自动压缩：监听 `agent/pre-step` 压力事件和 `agent/request-error` 溢出恢复 |
 | `checkpointCap` | `65536` | 单个检查点的编译预算（估算 token）：更小的会话近乎无损地保留，更大的内容则省略到该上限 |
 | `maxTokens` / `checkpointScale` | `8192` / `0.1` | **已弃用**——仅为兼容旧配置而接受，**不再起作用**：预算就是 cap 本身（无保底、无比例缩放） |
@@ -64,7 +73,7 @@ Recall 能取回**一切**：文本、推理过程、工具调用的完整参数
 | `toolKeyFields` | 内置 | 额外的"工具名 → 参数里的关键字段"映射，用于单行展示 |
 | `toolArgTools` | 见 compiler | 白名单：这些工具的关键参数会显示在单行里（`read`/`write`/`edit`/`glob`/`grep`/`bash`/`shell`/`web_search`/`skill`/`subagent`/…）；其余工具只显示名字 |
 | `hideTools` | — | 完全从检查点里去掉的内部管理工具 |
-| `modelPolicies` | — | 按 provider/model 单独覆盖 `thresholdRatio`/`retainTurns`/`retainTokens` |
+| `modelPolicies` | — | 按 provider/model 单独覆盖 `thresholdRatio`/`retainTurns`，并选择 `retainRatio` 或 `retainTokens` |
 | `compactionRetries` / `maxOverflowRetries` | `1` / `1` | 重试次数，含义和官方引擎一样 |
 | `summarizationProvider` / `summarizationModel` | — | 仅为兼容官方配置而接受；**不起作用**——本引擎从不调用模型 |
 
@@ -76,7 +85,7 @@ recall 工具和命令插件各自接受 `{ maxRecallTokens?: 16000, maxSearchHi
 
 ### 浏览器设置卡片（设置 → 插件）
 
-从 0.1.4 起，引擎在**任何装配了 settings 域**的部署（标准 web/desktop profile 都有）上暴露一个用户设置命名空间（`compaction-instant`）。可编辑子集持久化到 `settings.yaml`，**叠加在**插件行的 cordis 配置之上：
+DSH 0.1.2 中，第一个由预设挂载的即时压缩引擎拥有宿主全局设置命名空间 `compaction-instant`，其已解析的暴露字段构成共享 base；兼容的后续预设/会话实例复用该 base，不重复注册，拥有者卸载时会自动提升仍存活的兼容跟随者。用户覆盖持久化到 `settings.yaml`，并作用于所有参与共享设置的即时引擎：
 
 | 字段 | 含义 |
 |---|---|
@@ -84,9 +93,10 @@ recall 工具和命令插件各自接受 `{ maxRecallTokens?: 16000, maxSearchHi
 | `auto` | 注册步骤间自动压缩 |
 | `thresholdRatio` | 触发自动压缩的上下文窗口占比（默认 `0.5`） |
 | `retainTurns` | 优先保留的完整回合数（默认 `1`；不突破上限） |
-| `retainTokens` | 保留区 token **硬上限**，补足回合或截取最近回合时永不超出（默认 `5120`） |
+| `retainTokens` | 默认固定上限模式中的保留区 token **硬上限**（默认 `5120`） |
+| `retainRatio` | 仅当所属组合选择比例兼容模式时显示 |
 
-其余字段（`modelPolicies`、`toolArgTools`、`debug`、`debugLogPath`、已弃用的 `maxTokens`/`checkpointScale` 等）仍只由 cordis 配置管理。设置层永远弄不坏引擎：每次设置写入都会先经过完整配置解析器的重新校验才会持久化；未暴露的配置字段保持组合层的值。没有 settings 服务时引擎行为与之前完全一致（只看组合配置）。卡片注册在客户端 bundle 上，所以只要装上这个包就会出现，无需改任何部署配置——**重启一次 `dsh web`** 让启动图拾取 `dsh.client` bundle 即可。
+其余字段（`modelPolicies`、`toolArgTools`、`debug`、`debugLogPath`、已弃用的 `maxTokens`/`checkpointScale` 等）仍只由 Cordis 配置管理。`retainRatio` 与 `retainTokens` 是互斥模式；第一个引擎确定宿主全局模式，设置卡片编辑该模式，后续即时引擎实例沿用它而不会建立冲突命名空间。每次写入都会在持久化前针对所有参与共享设置的存活引擎完成校验；未暴露字段仍由各自组合管理，暴露字段统一采用首个拥有者的 base 加用户层。若共享层与后续预设的未暴露策略冲突（例如模型专属 `retainRatio` 高于共享阈值），该引擎会记录警告并继续只使用组合配置，既不跟随也不阻塞全局设置。没有 settings 服务时同样只使用组合配置。安装后需重启一次 `dsh web`，让启动图拾取 `dsh.client` bundle。
 
 ### 分词与多语言
 
@@ -101,7 +111,7 @@ recall 工具和命令插件各自接受 `{ maxRecallTokens?: 16000, maxSearchHi
 
 所有截断都发生在**字符边界**——绝不会把一个 emoji 从中间切开（有 `test/multilang.test.js` 保证）。字符密度上限按 DeepSeek 官方换算（token_usage 文档）：约每个非中日韩字符 0.3 token、每个中日韩字符 0.6 token。
 
-另外，Harness 自带的 token 计量器（用于"压缩后必须变小"的检查、`/compact` 的用量报告）用的是另一套 `字符数 / 4 + 固定开销` 的估算，两套算法故意并存——详见设计说明。
+Harness 自带的 token 计量器与 compiler 估算器彼此独立。DSH 0.1.2 提供路由价格 `tokens`（用于压力、保留范围和“压缩后必须变小”检查）以及固定启发式价格 `heuristicTokens`（写入持久化的 `compaction/summary.shadowedTokenCount`）；三者按协议并存。
 
 ## 保证
 
@@ -135,7 +145,6 @@ recall 工具和命令插件各自接受 `{ maxRecallTokens?: 16000, maxSearchHi
 | 8,192 | 8,243 | 0.33% | 111 | 2,090 |
 | 32,768 | 22,263 | 0.88% | 232 | 1,969 |
 | 65,536（部署默认） | 55,737 | 2.2% | 325 | 1,876 |
-| 65,536 | 55,737 | 2.2% | 325 | 1,876 |
 | 131,072 | 131,047 | 5.2% | 1,142 | 1,058 |
 | 226,205（一条不丢的临界值） | 226,205 | 9.0% | 2,199 | 0 |
 
@@ -155,23 +164,21 @@ dsh plugin --profile web add <spec>
 dsh plugin --profile web add "@deepseek-ai/dsh-compaction-basic@npm:dsh-compaction-instant"
 ```
 
-**dsh 目前没法让你选压缩引擎**，内置预设（`standard`、`code`、`cordis`）在配置里写死了包名 `@deepseek-ai/dsh-compaction-basic`。要让这些内置预设用上本引擎，就**顶替**内置插件：预设配置里的包名是从 profile 的 `node_modules` 解析的（优先级高于 Harness 自带的安装），所以把本包装到内置这个名字下面，所有内置预设就会自动加载本引擎——不动任何预设文件，预设以后升级也不受影响。
+DSH 0.1.2 在预设层拥有压缩引擎；带压缩组的内置预设（`standard`、`ptc`、`cordis`）写死了包名 `@deepseek-ai/dsh-compaction-basic`。把本包装到这个别名后，这三个预设会自动加载本引擎，不用修改预设文件；`minimal` 没有压缩组，因此保持不变。
 
 这样顶替是天然安全的：本引擎和官方引擎对外完全兼容——同一个 `ctx.compaction` 接口、**完全相同的依赖注入列表**（`llm`、`tokenMeter`、`sessions`）、相同的事件和报错方式，官方配置里的每一个键也都接受。把别名依赖删掉就恢复官方的引擎。
 
-这种安装方式**不会被识别成 bundle**（Harness 会从自己的安装目录解析 `@deepseek-ai/dsh-compaction-basic` 这个名字，那里是官方包，没有 `dsh.bundle` 声明），所以没有任何自动化——需要把 recall 工具和 `/recall` 命令自己加进 profile 的 `cordis.patch.yml`（新行必须放在 `insert` 列表里；这个文件热重载，不用重启）。行名必须用**别名包名**（这种安装方式下只有它能解析）；引擎行可选，只在需要给"没有压缩配置的预设"（如 `minimal`）提供宿主兜底时才加：
+这种安装方式不会使用本包的 bundle，因此只需把 recall 工具和 `/recall` 命令加进 profile 的 `cordis.patch.yml`（新行放在 `insert` 列表里；文件可热重载）。行名使用别名包名：
 
 ```yaml
-- id: compaction-basic
-  disabled: true                     # 宿主层替换（可选兜底）
 - insert:
-    - id: compaction-instant
-      name: '@deepseek-ai/dsh-compaction-basic'   # 给没有压缩配置的预设兜底
     - id: tool-recall
       name: '@deepseek-ai/dsh-compaction-basic/tool'
     - id: command-recall
       name: '@deepseek-ai/dsh-compaction-basic/command'
 ```
+
+不要添加宿主层即时引擎作为兜底：DSH 0.1.2 的未限定宿主监听器也会收到 `standard`/`ptc`/`cordis` 的事件，从而与预设引擎竞争。若要给 `minimal` 增加压缩，请复制该预设并在副本中添加隔离压缩组。
 
 ### 方法 2 —— 直接安装 + 让 AI 复制一份预设（dsh 创作模式）
 
@@ -185,7 +192,7 @@ dsh plugin --profile web add dsh-compaction-instant
 
 AI 会用 `agentPresets.copy('standard', '<id>')` 创建一份本地预设，在副本里改掉压缩行的 `name`，用 `standingKeyFor('<id>')` 校验能不能正常挂载，还可以通过改 `agent-presets` 行（`config.default: <id>`）把它设为默认。新预设会出现在 UI 选择器里；内置预设不受影响。
 
-从 v0.1.1 起，本包还声明了 `dsh.bundle`，所以直接安装会自动注册成 profile 的配置层：自动禁掉内置的摘要引擎行、自动插入本引擎和 recall 工具（见包内 `cordis.patch.yml`）。宿主这边不用手动配置，只需复制预设。
+直接安装会通过 `dsh.bundle` 自动注册全局继承的 recall 工具与命令，但不会挂载宿主压缩引擎：DSH 0.1.2 在每个预设里选择后端。复制后的预设因此是唯一的引擎激活点。
 
 ### 方法 3 —— 直接安装 + 手动配置预设
 
@@ -217,24 +224,25 @@ cp <built-in-preset>/agent.cordis.yml "$DSH_HOME/.agent-presets/<id>/agent.cordi
 
 规则：绝不改内置预设的安装文件；保留 isolate 隔离域；真正的检验是 `standingKeyFor` 挂载成功（或直接在预设上开一个会话）——预设列表里的 `broken` 标记只能发现解析错误。
 
-方法 2 和 3 **不需要任何宿主配置行**：上面提到的 `dsh.bundle` 会自动注册好一切。
+方法 2 和 3 不需要手写宿主配置行：bundle 注册 recall 配套能力，复制后的预设拥有唯一的压缩引擎。
 
 | 方法 | 内置预设里的引擎 | 要改预设文件吗 | 选择器里多出预设 | 安装成本 |
 |---|---|---|---|---|
-| **1. 别名替换** | ✅ 自动（standard/code/cordis） | 否 | 否 | 一条命令 + 手动 patch |
+| **1. 别名替换** | ✅ 自动（`standard`/`ptc`/`cordis`） | 否 | 否 | 一条命令 + recall patch |
 | **2. AI 复制副本** | 只有新预设 | 副本 | 是 | 一句提示 |
 | **3. 手动预设** | 只有新预设 | 副本 | 是 | 手动编辑 |
 
-> 每个上下文只能挂载一个 `ctx.compaction` 实现（接口文档写明"每个上下文加载一个实现"）；预设挂载各自有独立的隔离域，所以宿主和预设的实例永远不会冲突。
+> 每个预设上下文只能挂载一个 `ctx.compaction` 实现。0.1.5 已移除 bundle 中旧的宿主引擎行，避免宿主监听器与预设选中的引擎竞争。
 
 ## 开发
 
 ```bash
-npm test        # node --test（编译器单元测试、配置校验、会话集成、引擎）
-npm run check   # 对所有源码做 node --check
+npm ci          # 精确安装 DSH 0.1.2-rc.1 开发依赖图
+npm test        # compiler/config/session/settings/engine 集成测试
+npm run check   # 源码语法 + 严格公共类型声明检查
 ```
 
-本包依赖很少：`@deepseek-ai/schemastery` 用于配置校验；其余依赖都是 Harness 自己提供的。`src/compiler.js` 刻意零依赖，没有运行中的 Harness 也能单独跑单元测试。
+本包只有两个直接运行时依赖：`@deepseek-ai/schemastery` 用于配置 schema，`@deepseek-ai/dsh-util-values` 提供共享不可变值工具。其余 Harness 组件仍是 peer；测试使用锁定的 0.1.2-rc.1 开发依赖。`src/compiler.js` 仍保持零依赖。
 
 ## 和官方引擎的区别
 
@@ -242,7 +250,7 @@ npm run check   # 对所有源码做 node --check
 - 不改写 → 事实、文件路径、命令、变量名都一字不差；模型继续用自己的话接着聊。
 - 确定性 → 同样的内容永远压缩出同样的检查点。
 - 之前的检查点原样保留，而不是重新摘要一遍（又快又无损）。
-- 手动 `/compact` 和自动压力压缩都会保留最近的一段原文（优先整回合，`retainTokens` 为**硬上限**：补足整回合时总量永不超出；若最近回合本身就超过上限，只保留该回合内能装下的部分）而不是压缩全部历史，正在聊的内容永远不会被收走；只有更早的部分进检查点。
+- 手动 `/compact` 和自动压力压缩都会保留最近的一段原文；上限来自固定 `retainTokens` 或按上下文计算的 `retainRatio`。优先保留整回合，最新回合超限时只保留能装下的后缀，只有更早的部分进入检查点。
 - `compaction/summary` 事件携带**压缩后的条目本身**——UI 里可展开的检查点行显示的就是模型实际看到的内容，外面包一层**能自动变长的代码框**（框线永远比内容里的 ``` 长，所以含 markdown 的消息也能整齐地显示成一个代码块），检查点开头还有一段简短的使用指南，告诉模型怎么用 `recall` / `search` 找回被省略的内容。
 - 权衡：对以长对话、叙述为主的历史，检查点的信息密度可能不如 LLM 摘要（长句是截断而不是合并）。正在进行的对话有逐字保留的尾部（`retainTurns`/`retainTokens`）兜底，其余内容都能通过 `(seq N)` 指针 + recall 找回来。
 

@@ -5,9 +5,11 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import type z from '@deepseek-ai/schemastery';
-import type { Agent } from '@deepseek-ai/dsh-agent';
-import type { CompactionEngine as CompactionEngineBase, CompactionResult } from '@deepseek-ai/dsh-compaction';
-import type { Session } from '@deepseek-ai/dsh-session';
+import type { CommandId } from '@deepseek-ai/dsh-commands/brand';
+import type { CompactionAgentContext, CompactionEngine as CompactionEngineBase, CompactionResult, CompactionTrigger, ManualCompactAgentContext } from '@deepseek-ai/dsh-compaction';
+import type { Session, SessionSeq } from '@deepseek-ai/dsh-session';
+import type { CompileEntry, CompileStats } from './compiler.js';
+import type { RegionDependencies } from './region.js';
 
 /** Per-target pressure/retention overrides, mirroring compaction-basic's shape. */
 export interface ModelPolicyOverride {
@@ -16,7 +18,9 @@ export interface ModelPolicyOverride {
     thresholdRatio?: number;
     /** Mandatory complete recent turns kept verbatim for this target. */
     retainTurns?: number;
-    /** Retained-region token ceiling for this target; never exceeded by extension. */
+    /** compaction-basic compatibility: fraction of the target context window retained. */
+    retainRatio?: number;
+    /** Retained-region token ceiling for this target; mutually exclusive with retainRatio. */
     retainTokens?: number;
     /** Accepted for drop-in configuration compatibility; inert in this backend. */
     summarizationProvider?: string;
@@ -34,8 +38,10 @@ export interface InstantCompactionConfig {
     thresholdRatio?: number;
     /** Preferred complete recent turns kept verbatim; never overrides the ceiling. Default 1. */
     retainTurns?: number;
+    /** compaction-basic compatibility: fraction of the routed model context retained. */
+    retainRatio?: number;
     /**
-     * **Hard** retained-region token ceiling: older complete turns are added
+     * **Hard** retained-region token ceiling (mutually exclusive with retainRatio): older complete turns are added
      * only while the total fits, and when the latest turn alone exceeds it,
      * only the fitting suffix of that turn is kept. Default 5120.
      */
@@ -87,11 +93,25 @@ export interface InstantCompactionConfig {
     debugLogPath?: string;
 }
 
-/** Resolved, validated, frozen configuration after {@link resolveConfig}. */
-export interface ResolvedInstantCompactionConfig {
+/** Host-global settings-card subset; exactly one retention mode is active. */
+export interface InstantCompactionSettings {
+    checkpointCap?: number;
+    auto?: boolean;
+    thresholdRatio?: number;
+    retainTurns?: number;
+    retainRatio?: number;
+    retainTokens?: number;
+}
+
+/** Exactly one resolved retention form. */
+export type ResolvedRetention =
+    | { readonly retainRatio: number; readonly retainTokens?: never }
+    | { readonly retainRatio?: never; readonly retainTokens: number };
+
+/** Fields shared by every resolved engine configuration. */
+export interface ResolvedInstantCompactionConfigFields {
     readonly thresholdRatio: number;
     readonly retainTurns: number;
-    readonly retainTokens: number;
     /** Deprecated — carried for drop-in compatibility; the checkpoint budget is the cap alone. */
     readonly maxTokens: number;
     /** Deprecated — carried for drop-in compatibility; the checkpoint budget is the cap alone. */
@@ -117,6 +137,37 @@ export interface ResolvedInstantCompactionConfig {
     readonly debugSink?: (line: string) => void;
 }
 
+/** Resolved, validated, frozen configuration after {@link resolveConfig}. */
+export type ResolvedInstantCompactionConfig = ResolvedInstantCompactionConfigFields & ResolvedRetention;
+
+/** Fields common to fixed-token and context-ratio target policies. */
+export interface ResolvedTargetPolicyFields {
+    readonly target: { readonly provider: string; readonly model: string };
+    readonly thresholdRatio: number;
+    readonly retainTurns: number;
+    readonly summarizationProvider: string;
+    readonly summarizationModel: string;
+    readonly maxTokens: number;
+    readonly compactionRetries: number;
+    readonly maxOverflowRetries: number;
+}
+
+/** Exact-target policy before model-capacity scaling. */
+export type ResolvedTargetPolicy = ResolvedTargetPolicyFields & ResolvedRetention;
+
+/** Concrete pressure and retention budgets for one routed model context. */
+export interface ResolvedCompactSpec {
+    readonly target: { readonly provider: string; readonly model: string };
+    readonly contextWindow: number;
+    readonly thresholdRatio: number;
+    readonly thresholdTokens: number;
+    readonly retainTurns: number;
+    readonly retainTokens: number;
+    readonly maxTokens: number;
+    readonly compactionRetries: number;
+    readonly maxOverflowRetries: number;
+}
+
 /** Target-specific pressure configuration failure eligible for warning suppression. */
 export declare class TargetPressureConfigError extends Error {
     readonly targetKey: string;
@@ -126,9 +177,9 @@ export declare class TargetPressureConfigError extends Error {
 /** Validate and resolve the plugin configuration. */
 export declare function resolveConfig(config?: InstantCompactionConfig): ResolvedInstantCompactionConfig;
 /** Merge the exact provider/model override over the validated default policy. */
-export declare function resolveTargetPolicy(config: ResolvedInstantCompactionConfig, target: { provider: string; model: string }): unknown;
+export declare function resolveTargetPolicy(config: ResolvedInstantCompactionConfig, target: { provider: string; model: string }): ResolvedTargetPolicy;
 /** Scale one routed policy into concrete token budgets for its model capacity. */
-export declare function resolveCompactSpec(policy: unknown, contextWindow: number): unknown;
+export declare function resolveCompactSpec(policy: ResolvedTargetPolicy, contextWindow: number): ResolvedCompactSpec;
 /** Resolve the exact provider/model durably routed for the latest request. */
 export declare function routedTarget(session: Session): { provider: string; model: string } | undefined;
 
@@ -138,23 +189,10 @@ export declare const COMPILER_MODEL: string;
 
 /** One ordered compiled region, returned by the `compile` hook. */
 export interface CompiledRegion {
-    /** Ordered `{ seq, text }` entries, newest last. */
-    entries: { seq: number; text: string }[];
+    /** Ordered compiler entries, newest last. */
+    entries: CompileEntry[];
     /** Compile statistics including the density-aware token total. */
-    stats: {
-        nodes: number;
-        entries: number;
-        toolCalls: number;
-        toolResults: number;
-        images: number;
-        documents: number;
-        reasoningElided: number;
-        noiseElided: number;
-        checkpoints: number;
-        tokens: number;
-        elidedToolRows: number;
-        elidedRows: number;
-    };
+    stats: CompileStats;
     /** Whether the total cap forced budget rescaling or front elision. */
     capped: boolean;
     provider: string;
@@ -170,22 +208,26 @@ export interface CompiledRegion {
 export declare class InstantCompactionEngine extends CompactionEngineBase {
     static inject: string[];
     static Config: z<InstantCompactionConfig>;
+    static SETTINGS_NAMESPACE: 'compaction-instant';
+    static SETTINGS_SCHEMA: z<InstantCompactionSettings>;
     readonly config: ResolvedInstantCompactionConfig;
     constructor(ctx: Context, config?: InstantCompactionConfig);
     /** Resolve the total budget for one compiled checkpoint: always `checkpointCap`. */
     effectiveMaxTokens(shadowedTokenCount: number): number;
     /** Compile one priced region with the deterministic compiler; the sole subclass hook. */
     compile(prepared: {
-        shadowedSeqs: readonly number[];
+        shadowedSeqs: readonly SessionSeq[];
         session: Session;
         [key: string]: unknown;
-    }, agent: Agent | undefined, signal: AbortSignal | undefined): Promise<CompiledRegion>;
+    }, agent: CompactionAgentContext | undefined, signal: AbortSignal | undefined): Promise<CompiledRegion>;
     /** Compact for step-boundary pressure or provider-confirmed context overflow. */
-    compactIfNeeded(agent: Agent, trigger: 'pressure' | 'context-overflow', signal: AbortSignal): Promise<CompactionResult | null>;
+    compactIfNeeded(agent: CompactionAgentContext, trigger: CompactionTrigger, signal: AbortSignal): Promise<CompactionResult | null>;
     /** Compact one inclusive positional range from the agent-owned surface. */
-    compactRegion(start: number, end: number, agent: Agent, signal: AbortSignal): Promise<CompactionResult>;
+    compactRegion(start: SessionSeq, end: SessionSeq, agent: CompactionAgentContext, signal?: AbortSignal): Promise<CompactionResult>;
     /** Force one useful idle-session compaction below the pressure threshold. */
-    compactNow(agent: Agent, signal: AbortSignal, sourceCommandId?: string): Promise<CompactionResult | null>;
+    compactNow(agent: ManualCompactAgentContext, signal: AbortSignal, sourceCommandId?: CommandId): Promise<CompactionResult | null>;
+    /** Bind the effective token meter and dynamically dispatched compile hook. */
+    regionDependencies(): RegionDependencies;
 }
 
 export default InstantCompactionEngine;
