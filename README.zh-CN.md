@@ -24,7 +24,9 @@
 
 surface 第 0 个节点若是 `system/message`，系统头会留在压缩范围之外；自动选区从其后的 surface 节点开始，显式替换范围也不能包含系统头。Instant 保留策略不变：`retainTurns` 是偏好，`retainTokens`（或 `retainRatio` 换算预算）是上限，最近回合超限时保留能装下的后缀。工具配对保护可能将后缀扩展到超过上限；受保护的系统头单独保留。目标版本 basic 则按**最近尾部最低预算**选区，不是 instant 的整回合/上限策略，不能假定配置或行为完全等价。
 
-新增 0.2.1 依赖范围不等于完整兼容认证。本次源码审查针对 **0.2.1-alpha.5**（commit `1517a4dbca0a2789ff1d41ba439600f8547d23fa`），隔离 API/运行测试和类型检查通过，但客户端热重载及两项既有 recall 来源追溯问题尚未修复。其他 0.2.1 预发布版本、真实 GUI 和 profile 激活尚未验证；本次仅调整元数据，不修复这些问题。
+新增 0.2.1 依赖范围不等于完整兼容认证。本次源码审查针对 **0.2.1-alpha.5**（commit `1517a4dbca0a2789ff1d41ba439600f8547d23fa`）。回归现已覆盖按 owner 失效后的客户端重载、保存期间继续编辑草稿、非递增 surface 的恢复选择，以及官方 pruner 经压缩和日志重放后的来源恢复。其他 0.2.1 预发布版本、真实 GUI 和 profile 激活尚未验证。
+
+`recall(type: "result")` 会沿经过校验的官方 pruner 记录恢复原始工具结果；`recall(type: "seq")` 仍读取指定事件本身，包括裁剪后的版本。省略标记列出准确 seq，不把 surface 顺序当作数字区间。完整恢复指针及最低文本/格式开销可能超过异常小的检查点预算，返回的 token 统计会计入这些开销。
 
 固定源码依据：[basic 选区与系统头保护](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/compaction/compaction-basic/src/region.ts#L99-L155)、[替换操作字段](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/compaction/compaction-basic/src/region.ts#L505-L510)。
 
@@ -218,6 +220,8 @@ dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.2.0.tgz
 执行这些部署步骤前，先向用户确认目标 profile、安装包名（直接安装还是别名）、当前解析路径/版本和目标预设。若已有旧别名部署，应明确规划替换/移除，避免留下两套可能的引擎解析路径。安装后检查新产物及自定义预设实际解析结果。**宿主重载/重启必须先经用户确认**，因为可能中断活跃会话。重载宿主以重新加载包代码和启动元数据，然后刷新 Web 页面，在原宿主 URL 和新会话上验证；profile patch 热重载或仅刷新页面，都不能证明已加载模块换成了新代码。以上是操作步骤，不代表本版本已经部署。
 
 ### 别名安装：仅限明确核验的高级用法
+
+浏览器脚本只注册真实包名 `dsh-compaction-instant`。DSH alpha.5 按实际 manifest 包名发现 Client，仅有 npm 别名不属于受支持的浏览器承载路径。完整引擎/设置部署请使用直接安装加显式预设覆盖；旧的纯别名部署应迁移后再依赖插件配置页。
 
 以 `@deepseek-ai/dsh-compaction-basic` 为别名安装是旧版替换路径，只有实际预设与 resolver 选中该别名时才有效。它**不是天然安全的**，也不保证 `standard` 或所有配置都正确使用 instant；当前 basic 的策略不同。推荐上面的显式预设覆盖。若有意保留别名，需要核对解析模块、配置和配套子路径名称，经用户确认重新安装及宿主重载后验证所选预设。不要在同一预设里同时添加别名引擎与直接引擎行。
 

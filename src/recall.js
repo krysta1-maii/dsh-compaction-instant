@@ -136,13 +136,46 @@ export function findCheckpointSeqs(session) {
 }
 
 /**
+ * Resolve only the official pruner's adjacent shadow-price/replacement pairs.
+ * Other tool-result replacements keep their own meaning. Every followed edge
+ * must name an earlier result with the same message and call identities, so
+ * repeated pruning can be unwound without rewriting history or following cycles.
+ */
+function resolveResultSource(session, event) {
+  let current = event;
+  while (true) {
+    const operation = current.surfaceOp;
+    const prune = session.eventAt(current.seq - 1);
+    if (operation?.op !== "replace" || prune?.type !== "compaction/prune") break;
+    const sources = current.sourceEventSeqs;
+    const sourceSeq = sources?.[0];
+    const priced = prune.data;
+    const source = Number.isSafeInteger(sourceSeq) && sourceSeq >= 0 && sourceSeq < current.seq
+      ? session.eventAt(sourceSeq) : undefined;
+    if (sources?.length !== 1 || operation.startSeq !== sourceSeq || operation.endSeq !== sourceSeq
+      || priced.shadowedSeqs?.length !== 1 || priced.shadowedSeqs[0] !== sourceSeq
+      || priced.shadowedRange?.start !== sourceSeq || priced.shadowedRange?.end !== sourceSeq
+      || source?.type !== "tool/result" || source.data.message.id !== current.data.message.id
+      || source.data.message.toolCallId !== current.data.message.toolCallId) {
+      return { selections: [], errors: [
+        `result seq ${event.seq} has invalid prune provenance at seq ${current.seq}`
+      ] };
+    }
+    current = source;
+  }
+  return { selections: [{ start: current.seq, end: current.seq }], errors: [] };
+}
+
+/**
  * Resolve one typed recall reference into inclusive seq ranges.
  *
  *   - `type: "seq"` — `id` is a seq selection: numbers/ranges with the
  *     checkpoint marker forms (`12`, `3-7,15`, `seq 12`, `seqs 3-7`).
  *   - `type: "result"` — `id` names a tool result: the `result N` pointer
  *     from a tool-call one-liner (`result 3`, `seq 3`, or bare `3`); the
- *     resolved seq must be a `tool/result` event.
+ *     resolved seq must be a `tool/result` event. Official pruner replacements
+ *     resolve through their durable provenance to the original result; use
+ *     `type: "seq"` to inspect the replacement itself.
  *   - `type: "checkpoint"` — `id` is a checkpoint ordinal (`1` = oldest,
  *     as in the `[checkpoint N]` elision marker) or a `seq N` pointer to a
  *     checkpoint node.
@@ -163,7 +196,7 @@ export function resolveRecallReference(session, type, id) {
     const event = session.eventAt(seq);
     if (event === undefined) return { selections: [], errors: [`result seq ${seq} not found in this session`] };
     if (event.type !== "tool/result") return { selections: [], errors: [`seq ${seq} is not a tool result (it is ${event.type})`] };
-    return { selections: [{ start: seq, end: seq }], errors: [] };
+    return resolveResultSource(session, event);
   }
   if (type === "checkpoint") {
     const token = raw.replace(/^\((.*)\)$/u, "$1").trim();

@@ -6,7 +6,21 @@
 
 - Extends DSH peer/runtime requirements and `engines.dsh` to `^0.2.0-rc.1 || ^0.2.1-0`, admitting the 0.2.1 prerelease line and stable release without dropping rc.1/rc.2.
 - Adds Cordis 4.0.5 and Schemastery 3.18.5 prerelease ranges. Keeps the rc.2 development graph and all resolved lockfile packages unchanged.
-- Metadata-only: does not fix the client hot-reload or recall-provenance issues identified during the alpha.5 compatibility audit, and does not certify untested 0.2.1 releases.
+- The range declaration does not certify untested 0.2.1 releases; the runtime corrections below target the audited alpha.5 contracts.
+
+### Runtime recovery and client fixes
+
+- Registers the browser factory under the real package owner only, so owner-scoped invalidation can reload it without a stale alias collision. Legacy npm-alias-only browser deployments must migrate to direct installation plus explicit preset composition.
+- Successful settings saves clear only the submitted draft revisions, preserving edits, resets, and clears made while the Host mutation is pending.
+- Emits exact, deduplicated recovery seq selections for nonmonotonic surfaces, splitting consecutive runs at the recall span limit. Keeps both elision phases' provenance and the newest event's seq pointer intact.
+- Typed result recall follows validated adjacent official-pruner records back through repeated pruning to the original tool result. Raw seq recall remains verbatim; malformed provenance fails instead of following an unrelated result.
+- Complete recovery markers take priority over an impossibly small checkpoint budget. Token accounting includes this irreducible marker/text overhead; no hard-cap guarantee is made for those tiny-budget cases.
+
+### Runtime fix verification
+
+- On Linux, Node 22.22.1 passed all 150 checkout tests; Node 24.19.0 passed 151 (including automatic loading of the TypeScript compatibility fixture). Syntax and strict declaration checks passed.
+- The installed tarball passed all 144 artifact runtime tests on both the locked 0.2.0-rc.2 graph and an isolated, normally installed 0.2.1-alpha.5 graph with matching vendored prereleases. Alpha.5 Node exports, dependency validation, and strict consumer types also passed. Repository-only version assertions are excluded from artifact runs.
+- The real alpha.5 ClientModuleSystem source at `1517a4dbca0a2789ff1d41ba439600f8547d23fa` passed initial factory materialization plus two owner invalidation/reload cycles in a Node VM smoke. This is not a live browser/profile activation test. No deployment, host restart, or model request was performed.
 
 ## 0.2.0
 

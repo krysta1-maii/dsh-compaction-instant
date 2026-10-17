@@ -11,14 +11,11 @@
  *
  * This file is served verbatim by the deployment's client-modules bundle
  * route, so it must be a self-contained lazy-CJS factory in the
- * `window.__ModuleLoader__.load` format. It registers under BOTH package
- * names: the alias name used by drop-in deployments
- * (`@deepseek-ai/dsh-compaction-basic` — web profiles alias the official
- * package to this one so bundled agent presets keep resolving) and the real
- * unscoped package name. Exactly one of the two is required by the boot graph;
- * the other registration is inert. Each registration bakes its own package
- * name into the factory, because the Plugins page keys bundle configuration
- * sections by the installed package name.
+ * `window.__ModuleLoader__.load` format. Register only the real package owner:
+ * invalidation removes that owner, not unrelated alias registrations. The
+ * legacy compaction-basic alias is not a supported direct browser load path.
+ * The Plugins page also keys bundle configuration sections by the real package
+ * name.
  *
  * No TypeScript/JSX/bundler transforms run on this file.
  */
@@ -275,6 +272,8 @@ function makeInstantCompactionClientFactory(bundlePackage) {
       var plan = this.plan();
       var operations = plan.map(function (item) { return item.op; });
       if (plan.length === 0 || this.saving || operations.some(function (op) { return op === void 0; })) return;
+      // Each edit replaces its entry object: identity acts as a staged revision.
+      var submitted = new Map(this.staged);
       this.saving = true;
       this.failed = false;
       this.publish();
@@ -289,7 +288,11 @@ function makeInstantCompactionClientFactory(bundlePackage) {
           if (item.op.op === "unset") return user === void 0 || !Object.prototype.hasOwnProperty.call(user, item.field);
           return user !== void 0 && user[item.field] === item.op.value;
         });
-        if (landed) self.staged.clear();
+        if (landed) {
+          submitted.forEach(function (edit, field) {
+            if (self.staged.get(field) === edit) self.staged.delete(field);
+          });
+        }
         self.saving = false;
         self.failed = !landed;
         self.publish();
@@ -553,10 +556,6 @@ function makeInstantCompactionClientFactory(bundlePackage) {
   };
 }
 
-window.__ModuleLoader__.load({
-  id: "@deepseek-ai/dsh-compaction-basic",
-  factory: makeInstantCompactionClientFactory("@deepseek-ai/dsh-compaction-basic")
-});
 window.__ModuleLoader__.load({
   id: "dsh-compaction-instant",
   factory: makeInstantCompactionClientFactory("dsh-compaction-instant")

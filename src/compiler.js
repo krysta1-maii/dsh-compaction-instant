@@ -437,7 +437,7 @@ function seqRef(seq) {
  * Build marker for this compiler revision. Bumped whenever the compiled
  * output format changes, so debug logs can prove which code version ran.
  */
-export const COMPILER_REV = "vcc-compiler-debug-2";
+export const COMPILER_REV = "vcc-compiler-debug-3";
 
 /**
  * Emit one debug line through the configured sink (and stderr). The sink is
@@ -721,11 +721,23 @@ function scaleBudgets(budgets, factor) {
   return scaled;
 }
 
-/** Render the provenance range of one dropped-entry list. */
-function seqRangeOf(dropped) {
-  const first = dropped[0].seq;
-  const last = dropped[dropped.length - 1].seq;
-  return first === last ? `seq ${first}` : `seqs ${first}-${last}`;
+/**
+ * Render exact seqs in first-appearance order, not a numeric surface interval.
+ * Only actual +1 runs become ranges; split at recall.js MAX_RECALL_SPAN (1000)
+ * without importing recall.js, which itself depends on this standalone module.
+ * Work and output depend on unique dropped seqs, never on sparse seq gaps.
+ */
+function seqSelectionOf(dropped) {
+  const seqs = [...new Set(dropped.map((entry) => entry.seq))];
+  const parts = [];
+  for (let index = 0; index < seqs.length;) {
+    const first = seqs[index];
+    let end = index;
+    while (end + 1 < seqs.length && end - index + 1 < 1000 && seqs[end + 1] === seqs[end] + 1) end += 1;
+    parts.push(end === index ? String(first) : `${first}-${seqs[end]}`);
+    index = end + 1;
+  }
+  return `${seqs.length === 1 ? "seq" : "seqs"} ${parts.join(",")}`;
 }
 
 /**
@@ -734,7 +746,9 @@ function seqRangeOf(dropped) {
  * the oldest low-value rows (tool/result/media/note) are front-elided first,
  * and only then the oldest remaining entries — so the conversation's words
  * survive elision before its logs do. The newest entries always survive —
- * recency is the value ranking, as in VCC chunking.
+ * recency is the value ranking, as in VCC chunking. Complete recovery markers
+ * and the minimum newest-text budget may exceed a cap too small to hold them;
+ * `stats.tokens` includes this irreducible overhead rather than hiding it.
  * @param nodes - ordered `{ seq, message }` projections.
  * @param config - resolved compiler configuration.
  * @returns `{ entries, stats, capped }` — `capped` records cap enforcement.
@@ -758,10 +772,14 @@ export function compileRegion(nodes, config) {
   let capped = false;
   if (result.stats.tokens > config.maxTokens) {
     const entries = result.entries;
+    // Keep generated provenance outside the rows eligible for further elision:
+    // dropping a summary would otherwise lose all but its first seq pointer.
+    const markers = [];
+    let markerTokens = 0;
     // Phase A: drop the oldest low-value rows (tool/result/media/note)
     // anywhere in the list first, so conversation text and prior-checkpoint
-    // knowledge survive elision before the logs do. The marker's seq range is
-    // the dropped rows' span (approximate: surviving text may sit inside it).
+    // knowledge survive elision before the logs do. Select only dropped seqs,
+    // including nonmonotonic surface seqs and multiple blocks from one event.
     const toolRows = [];
     while (entries.length > 1 && result.stats.tokens > config.maxTokens) {
       const index = entries.findIndex((entry, position) => position < entries.length - 1 && LOW_VALUE_KINDS.has(entry.kind));
@@ -773,8 +791,10 @@ export function compileRegion(nodes, config) {
     if (toolRows.length > 0) {
       capped = true;
       result.stats.elidedToolRows += toolRows.length;
-      entries.unshift({ seq: toolRows[0].seq, text: `[${toolRows.length} tool/result entries elided: ${seqRangeOf(toolRows)}]`, kind: "note" });
-      result.stats.tokens += estimateEntryTokens(entries[0].text);
+      const marker = { seq: toolRows[0].seq, text: `[${toolRows.length} tool/result entries elided: ${seqSelectionOf(toolRows)}]`, kind: "note" };
+      markers.push(marker);
+      markerTokens += estimateEntryTokens(marker.text);
+      result.stats.tokens += estimateEntryTokens(marker.text);
     }
     const elided = [];
     const droppedCheckpoints = [];
@@ -790,21 +810,27 @@ export function compileRegion(nodes, config) {
       // Dropped prior checkpoints never vanish silently: each leaves a
       // single `[checkpoint N]` line the agent can restore in full via
       // recall(type:"checkpoint", id:"N").
-      const markerLines = [`[${elided.length} earlier entries elided: ${seqRangeOf(elided)}]`];
+      const markerLines = [`[${elided.length} earlier entries elided: ${seqSelectionOf(elided)}]`];
       for (const dropped of droppedCheckpoints) {
         const ordinal = config.checkpointOrdinals?.get(dropped.seq);
         const ref = ordinal === undefined ? `@ seq ${dropped.seq}` : String(ordinal);
         markerLines.push(`[checkpoint ${ref}]`);
       }
-      entries.unshift({ seq: elided[0].seq, text: markerLines.join("\n"), kind: "note" });
-      result.stats.tokens += estimateEntryTokens(entries[0].text);
+      const marker = { seq: elided[0].seq, text: markerLines.join("\n"), kind: "note" };
+      markers.unshift(marker);
+      markerTokens += estimateEntryTokens(marker.text);
+      result.stats.tokens += estimateEntryTokens(marker.text);
     }
     if (result.stats.tokens > config.maxTokens && entries.length === 1) {
       capped = true;
-      const hard = truncateTokens(entries[0].text, Math.max(8, config.maxTokens - 4), "total cap");
+      // Exact sparse selections and checkpoint references have an irreducible
+      // provenance floor. Never truncate them to meet an impossibly small cap;
+      // bound the newest text with the remaining budget (and its 8-token floor).
+      const hard = truncateTokens(entries[0].text, Math.max(8, config.maxTokens - markerTokens - 4), seqRef(entries[0].seq));
       entries[0] = { seq: entries[0].seq, text: hard.text, kind: entries[0].kind };
-      result.stats.tokens = estimateEntryTokens(entries[0].text);
+      result.stats.tokens = markerTokens + estimateEntryTokens(entries[0].text);
     }
+    entries.unshift(...markers);
   }
   return { ...result, capped };
 }

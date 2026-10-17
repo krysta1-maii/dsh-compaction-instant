@@ -87,7 +87,6 @@ test("client manifest and module factory use only 0.2.0 browser modules", () => 
     window: { __ModuleLoader__: { load: (definition) => definitions.push(definition) } }
   });
   assert.deepEqual(definitions.map((definition) => definition.id), [
-    "@deepseek-ai/dsh-compaction-basic",
     "dsh-compaction-instant"
   ]);
   for (const definition of definitions) {

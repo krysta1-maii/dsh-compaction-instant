@@ -11,6 +11,7 @@ import {
   compileRegion,
   countTokens,
   estimateDeepSeekTokens,
+  estimateEntryTokens,
   excerptToolResult,
   frameCheckpoint,
   isCheckpointSource,
@@ -25,6 +26,7 @@ import {
   tokenize,
   truncateTokens
 } from "../src/compiler.js";
+import { MAX_RECALL_SPAN, expandSelections, parseSeqSpec } from "../src/recall.js";
 
 const CONFIG = {
   maxTokens: 8192,
@@ -278,6 +280,94 @@ test("compileRegion rescales budgets and front-elides under the cap", () => {
   // The newest node always survives.
   const last = entries[entries.length - 1];
   assert.match(last.text, /payload 20/);
+});
+
+test("compileRegion cap markers round-trip exact ordered seqs through recall", async (t) => {
+  const cases = [
+    { name: "forward", seqs: [1, 2, 3, 4], blocks: 6 },
+    { name: "reversed checkpoint surface", seqs: [100, 2, 3], blocks: 6, checkpoint: true },
+    { name: "high middle with increasing endpoints", seqs: [2, 100, 3, 4], blocks: 6 },
+    { name: "repeated seq across text blocks", seqs: [9, 5, 6], blocks: 8 },
+    { name: "sparse billion-seq gaps", seqs: [2, 1000000000, 2000000000, 3000000000], blocks: 6 },
+    { name: "consecutive span over recall limit", seqs: Array.from({ length: MAX_RECALL_SPAN + 20 }, (_, i) => i + 1), blocks: 1 }
+  ];
+  for (const fixture of cases) {
+    await t.test(fixture.name, () => {
+      const nodes = fixture.seqs.map((seq, position) => ({
+        seq,
+        message: {
+          role: "user",
+          source: fixture.checkpoint && position === 0 ? { kind: "compact-checkpoint" } : { kind: "user" },
+          content: Array.from({ length: fixture.blocks }, () => ({ type: "text", text: "payload " + "word ".repeat(100) }))
+        }
+      }));
+      const config = { ...CONFIG, maxTokens: 96, checkpointOrdinals: new Map([[100, 1]]) };
+      const { entries, stats, capped } = compileRegion(nodes, config);
+      assert.ok(capped && stats.elidedRows > 0, "cap drops actual entries");
+      const marker = entries[0].text.match(/\[\d+ earlier entries elided: (seqs? [^\]]+)\]/);
+      assert.ok(marker, "actual output includes a complete selection");
+      const parsed = parseSeqSpec(marker[1]);
+      assert.deepEqual(parsed.errors, [], marker[1]);
+      const dropped = compileNodes(nodes, config).entries.slice(0, stats.elidedRows);
+      const expected = [...new Set(dropped.map((entry) => entry.seq))];
+      assert.deepEqual(expandSelections(parsed.selections), expected, "covers every dropped seq, no invented interval or duplicates");
+      assert.ok(parsed.selections.every(({ start, end }) => end >= start && end - start + 1 <= MAX_RECALL_SPAN));
+      if (fixture.checkpoint) assert.match(entries[0].text, /\[checkpoint 1\]/);
+      if (fixture.blocks > 1) assert.ok(dropped.length > expected.length, "exercises repeated seq entries");
+      if (fixture.seqs.length > MAX_RECALL_SPAN) {
+        assert.ok(expected.length > MAX_RECALL_SPAN, "dropped selection spans more than one legal range");
+        assert.ok(marker[1].length < 80, "dense runs stay compact");
+      }
+      assert.ok(stats.tokens <= config.maxTokens + 64, `tokens ${stats.tokens} retain only bounded marker/floor overhead`);
+    });
+  }
+});
+
+test("mixed elision phases preserve every tool and conversation recovery pointer", () => {
+  const nodes = [100, 2, 90, 3].map(seq => ({
+    seq,
+    message: { role: "assistant", source: { provider: "p", model: "m" }, content: [
+      { type: "text", text: "history " + "word ".repeat(200) },
+      { type: "tool-call", id: "call-" + seq, name: "read", arguments: '{"file_path":"large.txt"}' }
+    ] }
+  }));
+  nodes.push({ seq: 4, message: { role: "user", source: { kind: "user" }, content: [
+    { type: "text", text: "newest " + "word ".repeat(200) }
+  ] } });
+  const config = { ...CONFIG, maxTokens: 64 };
+  const result = compileRegion(nodes, config);
+  const originalEntries = compileNodes(nodes, config).entries;
+  const tools = originalEntries.filter(entry => entry.kind === "tool");
+  assert.equal(result.stats.elidedToolRows, tools.length, "phase A removes all tool rows");
+  assert.ok(result.stats.elidedRows > 0, "phase B also removes older conversation");
+  const markers = result.entries.filter(entry => entry.kind === "note");
+  assert.equal(markers.length, 2, "phase B cannot discard phase A's generated provenance");
+  const recovered = [];
+  for (const marker of markers) {
+    const selection = marker.text.match(/entries elided: (seqs? [^\]]+)/)[1];
+    const parsed = parseSeqSpec(selection);
+    assert.deepEqual(parsed.errors, []);
+    recovered.push(...expandSelections(parsed.selections));
+  }
+  const droppedText = originalEntries.filter(entry => entry.kind !== "tool").slice(0, result.stats.elidedRows);
+  assert.deepEqual(new Set(recovered), new Set([...tools, ...droppedText].map(entry => entry.seq)));
+  assert.match(result.entries.at(-1).text, /newest/);
+  assert.equal(result.stats.tokens, result.entries.reduce((sum, entry) => sum + estimateEntryTokens(entry.text), 0));
+});
+
+test("an irreducible sparse selection keeps valid pointers and the newest seq", () => {
+  const nodes = Array.from({ length: 100 }, (_, index) => ({
+    seq: index * 1000000 + 1,
+    message: { role: "user", source: { kind: "user" }, content: [{ type: "text", text: "payload " + "word ".repeat(100) }] }
+  }));
+  const result = compileRegion(nodes, { ...CONFIG, maxTokens: 16 });
+  const selection = result.entries[0].text.match(/entries elided: (seqs? [^\]]+)/)[1];
+  const parsed = parseSeqSpec(selection);
+  assert.deepEqual(parsed.errors, []);
+  assert.deepEqual(expandSelections(parsed.selections), nodes.slice(0, -1).map(node => node.seq));
+  assert.match(result.entries.at(-1).text, new RegExp("truncated from seq " + nodes.at(-1).seq));
+  assert.ok(result.stats.tokens > 16, "complete recovery pointers form a documented irreducible overhead");
+  assert.equal(result.stats.tokens, result.entries.reduce((sum, entry) => sum + estimateEntryTokens(entry.text), 0));
 });
 
 test("compileRegion elides tool rows before conversation text", () => {

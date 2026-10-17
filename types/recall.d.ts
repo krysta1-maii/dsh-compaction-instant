@@ -53,7 +53,7 @@ export declare function projectMessageText(message: { role: string; content: rea
 export declare function expandSelections(selections: readonly SeqSelection[]): number[];
 /** Collect the seqs of every landed checkpoint node, oldest first (1 = oldest compaction). */
 export declare function findCheckpointSeqs(session: RecallableSession): number[];
-/** Resolve one typed recall reference (`seq` / `result` / `checkpoint`) into seq ranges. */
+/** Resolve a typed reference into seq ranges; `result` follows official prune provenance to the original result, while `seq` reads the addressed event verbatim. */
 export declare function resolveRecallReference(session: RecallableSession, type: 'seq' | 'result' | 'checkpoint' | string, id: string): { selections: SeqSelection[]; errors: string[] };
 /** Recall the full original content of the requested seqs from one session log. */
 export declare function recallSession(session: RecallableSession, selections: readonly SeqSelection[], config: { maxRecallTokens: number }): RecallResult;
