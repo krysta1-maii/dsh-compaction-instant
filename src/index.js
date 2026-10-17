@@ -2,10 +2,10 @@
  * Instant replay-aware compaction backend: VCC-style deterministic context
  * compilation for the DeepSeek Harness.
  *
- * A contract-exact drop-in replacement for `@deepseek-ai/dsh-compaction-basic`:
- * identical `ctx.compaction` seam (trigger policy, retention, durable
- * transaction protocol, `busy`/`changed`/`summary`/`commit`/`persistence`
- * failures), but the summarization step is replaced by the offline
+ * A DSH 0.2.0 `ctx.compaction` backend sharing the durable transaction
+ * protocol and `busy`/`changed`/`summary`/`commit`/`persistence` failures.
+ * Instant keeps its own whole-turn/token-ceiling retention policy; it does not
+ * copy basic's minimum-tail policy. Summarization is replaced by the offline
  * conversation compiler ported from https://github.com/lllyasviel/VCC
  * (see compiler.js). No model call is made, so one compaction completes in
  * milliseconds with original tokens only — instant and near-lossless.
@@ -105,75 +105,36 @@ export class TargetPressureConfigError extends Error {
 }
 
 /**
- * Pick the settings-exposed subset out of a resolved engine config, so the
- * namespace base is complete, JSON-safe, and preserves one retention mode.
+ * Apply the host-global settings mode over one preset entry. The served
+ * section is sparse (only user-set fields); a section carrying both retention
+ * modes resolves to ratio mode, matching the historical settings base, so the
+ * merged entry never trips the engine's mutual-exclusion rule.
  */
-function pickSettingsFields(config) {
-  return {
-    checkpointCap: config.checkpointCap,
-    auto: config.auto,
-    thresholdRatio: config.thresholdRatio,
-    retainTurns: config.retainTurns,
-    ...config.retainRatio !== undefined ? { retainRatio: config.retainRatio } : { retainTokens: config.retainTokens }
-  };
-}
-
-/** Apply the host-global settings mode over one preset entry. */
 function mergeSettingsFields(entry, settings) {
   const normalizedEntry = { ...entry };
-  if (settings.retainRatio !== undefined) delete normalizedEntry.retainTokens;
-  if (settings.retainTokens !== undefined) delete normalizedEntry.retainRatio;
-  return { ...normalizedEntry, ...settings };
+  const normalizedSettings = { ...settings };
+  if (settings.retainRatio !== undefined) {
+    delete normalizedEntry.retainTokens;
+    delete normalizedSettings.retainTokens;
+  } else if (settings.retainTokens !== undefined) {
+    delete normalizedEntry.retainRatio;
+  }
+  return { ...normalizedEntry, ...normalizedSettings };
 }
 
-const SETTINGS_GROUPS = new WeakMap();
+/** Read the served instant-compaction section off the 0.1.7 settings plane. */
+function readSharedSettings(settings) {
+  if (typeof settings.describe !== "function") return;
+  const descriptor = settings.describe().find((row) => row.ns === InstantCompactionEngine.SETTINGS_NAMESPACE);
+  const value = descriptor?.value;
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value : undefined;
+}
+
 const FIBER_DISPOSED = 4;
 const FIBER_UNLOADING = 5;
 
 function isContextUnloading(ctx) {
   return ctx.fiber.state === FIBER_UNLOADING || ctx.fiber.state === FIBER_DISPOSED;
-}
-
-function reloadSettingsGroup(group) {
-  for (const member of group.members) member.engine._reloadConfig();
-}
-
-function installSettingsOwner(group, member) {
-  if (member.disposed || isContextUnloading(member.ctx) || group.owner !== null) return;
-  group.owner = member;
-  member.scoped.settings.installSection(
-    member.ctx,
-    InstantCompactionEngine.SETTINGS_NAMESPACE,
-    InstantCompactionEngine.SETTINGS_SCHEMA,
-    group.base,
-    {
-      validate: (value) => {
-        for (const current of group.members) resolveConfig(mergeSettingsFields(current.entry, value));
-      },
-      setSource: (current) => {
-        group.current = current;
-        for (const target of group.members) {
-          target.engine.source = () => mergeSettingsFields(target.entry, current());
-        }
-      },
-      onChange: () => {
-        reloadSettingsGroup(group);
-      }
-    }
-  );
-}
-
-function promoteSettingsOwner(group) {
-  if (group.owner !== null || group.members.size === 0) return;
-  const member = Array.from(group.members).find((candidate) => !candidate.disposed && !isContextUnloading(candidate.ctx));
-  if (member === undefined) return;
-  const existing = member.scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE);
-  if (existing !== undefined) {
-    group.current = () => member.scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE) ?? {};
-    reloadSettingsGroup(group);
-    return;
-  }
-  installSettingsOwner(group, member);
 }
 
 /**
@@ -525,12 +486,18 @@ export class InstantCompactionEngine extends CompactionEngine {
     debug: z.boolean(),
     debugLogPath: z.string()
   });
-  /** Settings namespace for user-owned instant-compaction preferences. */
+  /**
+   * Settings form namespace carrying user-owned instant-compaction
+   * preferences — the composition row id of the bundle's settings bridge
+   * (dsh-compaction-instant/settings).
+   */
   static SETTINGS_NAMESPACE = "compaction-instant";
   /**
-   * Settings-exposed subset of the engine configuration. The first engine
-   * supplies a fully resolved base, including exactly one retention mode; the
-   * schema validates sparse user overrides. Debug behavior stays engine-only.
+   * Settings-exposed subset of the engine configuration, as sparse user
+   * overrides; unset fields inherit the engine/composition defaults. The
+   * bridge row (src/settings.js) serves this field set as a volatile Config
+   * schema, and the engine revalidates every merged value itself. Debug
+   * behavior stays engine-only.
    */
   static SETTINGS_SCHEMA = z.object({
     checkpointCap: z.number().step(1).min(1),
@@ -568,63 +535,56 @@ export class InstantCompactionEngine extends CompactionEngine {
     engineDebug(this.config, `config reloaded rev=${COMPILER_REV} source=${this.source ? "settings" : "entry"} argTools=[${this.config.toolArgTools.join(",")}] auto=${this.config.auto}`);
   }
   /**
-   * Mount the optional settings namespace over this engine's configuration
-   * source. With a settings service present, the user layer (settings.yaml)
-   * overlays the composition entry's exposed subset; without one, the engine
-   * keeps reading the entry exactly as composed. The whole engine validation
-   * runs on every settings write, so a value that would break the engine is
-   * refused before it is persisted.
+   * Follow the optional host-global settings form over this engine's
+   * configuration source. DSH 0.1.7 serves volatile Loader-entry configs as
+   * settings forms: the bundle's `compaction-instant` bridge row
+   * (dsh-compaction-instant/settings) carries the user layer in the profile
+   * patch, and every mounted engine overlays that sparse section on its own
+   * composition entry. Writes are schema-validated at the settings plane and
+   * revalidated here against this preset entry; a section that would break
+   * this engine is ignored with a warning (composition-only) rather than
+   * refused, because one shared section serves every preset instance. Without
+   * a settings service or the bridge row, the engine reads the entry exactly
+   * as composed.
    */
   _installSettingsSection(ctx) {
     const entry = this.entry;
-    const base = pickSettingsFields(this.config);
-    // DSH 0.1.2 mounts compaction engines per preset/session while settings is
-    // host-global. Coordinate one namespace owner per root and promote a live
-    // follower if the owning preset unloads.
     ctx.inject(["settings"], (scoped) => {
-      let group = SETTINGS_GROUPS.get(ctx.root);
-      if (group === undefined) {
-        group = { root: ctx.root, members: new Set(), owner: null, current: undefined, base };
-        SETTINGS_GROUPS.set(ctx.root, group);
-      }
-      const member = { engine: this, ctx, scoped, entry, disposed: false };
-      group.members.add(member);
-      let stopSettingsUpdates = () => {};
-      const detachMember = () => {
-        if (member.disposed) return;
-        member.disposed = true;
-        stopSettingsUpdates();
-        const wasOwner = group.owner === member;
-        if (wasOwner) {
-          group.owner = null;
-          group.current = undefined;
+      let detached = false;
+      let warnedSignature;
+      const apply = () => {
+        if (detached) return;
+        let section;
+        try {
+          section = readSharedSettings(scoped.settings);
+        } catch {
+          section = undefined;
         }
-        group.members.delete(member);
-        this.source = () => entry;
-        if (!isContextUnloading(ctx)) this._reloadConfig();
-        if (group.members.size === 0) {
-          SETTINGS_GROUPS.delete(group.root);
-        } else if (wasOwner) {
-          queueMicrotask(() => promoteSettingsOwner(group));
+        this.source = section === undefined ? () => entry : () => mergeSettingsFields(entry, section);
+        try {
+          this._reloadConfig();
+        } catch (error) {
+          this.source = () => entry;
+          this._reloadConfig();
+          const signature = JSON.stringify(section);
+          if (signature !== warnedSignature) {
+            warnedSignature = signature;
+            const message = error instanceof Error ? error.message : String(error);
+            ctx.logger.warn(`compaction-instant: shared settings are incompatible with this preset entry; continuing composition-only (${message})`);
+          }
         }
       };
-      scoped.effect(() => detachMember);
-      stopSettingsUpdates = scoped.on("settings/updated", (namespace) => {
-        if (group.owner === null && namespace === InstantCompactionEngine.SETTINGS_NAMESPACE) reloadSettingsGroup(group);
+      apply();
+      const stopUpdates = scoped.on("settings/document-updated", (namespace) => {
+        if (namespace === InstantCompactionEngine.SETTINGS_NAMESPACE) apply();
       });
-      try {
-        const existing = scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE);
-        if (group.current === undefined && existing !== undefined) {
-          group.current = () => scoped.settings.get(InstantCompactionEngine.SETTINGS_NAMESPACE) ?? {};
-        }
-        this.source = () => mergeSettingsFields(entry, group.current?.() ?? {});
-        this._reloadConfig();
-        if (existing === undefined && group.owner === null) installSettingsOwner(group, member);
-      } catch (error) {
-        detachMember();
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.logger.warn(`compaction-instant: shared settings are incompatible with this preset entry; continuing composition-only (${message})`);
-      }
+      scoped.effect(() => () => {
+        if (detached) return;
+        detached = true;
+        stopUpdates();
+        this.source = () => entry;
+        if (!isContextUnloading(ctx)) this._reloadConfig();
+      });
     });
   }
   /** Register or dispose the automatic-compaction listeners with the `auto` flag. */
@@ -900,4 +860,28 @@ export class InstantCompactionEngine extends CompactionEngine {
 }
 
 export { COMPILER_MODEL, COMPILER_PROVIDER };
-export default InstantCompactionEngine;
+
+/**
+ * Root-module plugin: dispatch on the row's purpose. Preset composition rows
+ * (and any composition that names this package as its compaction backend)
+ * mount the engine. The bundle's `compaction-instant-client` row carries the
+ * same bare specifier with `carrier: true` and stays inert: dsh-client-modules
+ * binds a bundle's browser half to the profile row whose specifier is exactly
+ * the package name, and mounting a second engine at profile level would race
+ * every preset-owned backend. The carrier row must exist and stay enabled for
+ * the Plugins page configuration section to appear.
+ */
+const InstantCompactionPlugin = {
+  Config: InstantCompactionEngine.Config,
+  async apply(ctx, config = {}) {
+    const { carrier, ...engineConfig } = config;
+    if (carrier !== undefined && typeof carrier !== "boolean") {
+      throw new Error("dsh-compaction-instant: carrier must be a boolean");
+    }
+    if (carrier === true) return;
+    // Await the engine fiber so its pending/failed state stays visible on this
+    // row exactly as a direct class mount would report it (preset mount audit).
+    await ctx.plugin(InstantCompactionEngine, engineConfig).await();
+  }
+};
+export default InstantCompactionPlugin;

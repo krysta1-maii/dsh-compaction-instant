@@ -389,7 +389,10 @@ export function projectToolResultText(blocks) {
 
 /** Whether a message source identifies a landed compaction checkpoint node. */
 export function isCheckpointSource(source) {
-  return source !== undefined && source.kind === "plugin" && source.plugin === "compact";
+  if (source === undefined || source === null) return false;
+  // DSH 0.1.7's compactCheckpointSource marker, plus the pre-0.1.7 plugin
+  // marker persisted in logs written by older hosts.
+  return source.kind === "compact-checkpoint" || (source.kind === "plugin" && source.plugin === "compact");
 }
 
 /**
@@ -501,10 +504,18 @@ export function compileNodes(nodes, config, budgets) {
   // Pre-pass over the ordered nodes: map each tool-call id to the seq of its
   // result node, so every call one-liner can carry a VCC-style result pointer
   // (`(seq N -> result M)`) even though results no longer occupy entries.
+  // Tool results are first-class role "tool" messages since DSH 0.1.7; the
+  // pre-0.1.7 user-role shape (leading tool-result content block) is still
+  // recognized for logs written by older hosts.
   const resultSeqByCallId = new Map();
   for (const node of nodes) {
     const message = node.message;
-    if (message === null || message === undefined || message.role !== "user" || message.content === undefined) continue;
+    if (message === null || message === undefined || message.content === undefined) continue;
+    if (message.role === "tool" && typeof message.toolCallId === "string") {
+      resultSeqByCallId.set(message.toolCallId, node.seq);
+      continue;
+    }
+    if (message.role !== "user") continue;
     const first = message.content[0];
     if (first !== undefined && first.type === "tool-result" && typeof first.toolCallId === "string") {
       resultSeqByCallId.set(first.toolCallId, node.seq);
@@ -613,12 +624,17 @@ export function compileNodes(nodes, config, budgets) {
       /* reasoning-only and empty assistant messages produce no entry */
       continue;
     }
+    if (message.role === "tool") {
+      // Tool results never occupy an entry: the content is either absorbed
+      // into the following assistant text or one recall away via the call
+      // line's `-> result N` pointer (VCC drops results from brief mode too).
+      stats.toolResults += 1;
+      continue;
+    }
     if (message.role === "user") {
       const first = message.content[0];
       if (first !== undefined && first.type === "tool-result") {
-        // Tool results never occupy an entry: the content is either absorbed
-        // into the following assistant text or one recall away via the call
-        // line's `-> result N` pointer (VCC drops results from brief mode too).
+        // Pre-0.1.7 logs carried results as user messages; treat them alike.
         stats.toolResults += 1;
         continue;
       }

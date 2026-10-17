@@ -5,6 +5,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { compileNoisePatterns, DEFAULT_ARG_TOOLS, DEFAULT_NOISE_PATTERNS } from "../src/compiler.js";
 import { InstantCompactionEngine, resolveCompactSpec, resolveConfig, resolveTargetPolicy, TargetPressureConfigError } from "../src/index.js";
 
@@ -87,13 +89,14 @@ test("resolveConfig debug defaults off and installs a file sink when on", () => 
   assert.equal(resolveConfig({}).debugSink, undefined);
   assert.throws(() => resolveConfig({ debug: "yes" }), /debug/);
   assert.throws(() => resolveConfig({ debugLogPath: 5 }), /debugLogPath/);
-  const debug = resolveConfig({ debug: true, debugLogPath: "/tmp/dsh-compaction-debug-test.log" });
+  const debugLogPath = join(tmpdir(), "dsh-compaction-debug-test.log");
+  const debug = resolveConfig({ debug: true, debugLogPath });
   assert.equal(debug.debug, true);
   assert.equal(typeof debug.debugSink, "function");
   debug.debugSink(`test line ${Date.now()}`);
-  const lines = readFileSync("/tmp/dsh-compaction-debug-test.log", "utf8").trim().split("\n");
+  const lines = readFileSync(debugLogPath, "utf8").trim().split("\n");
   assert.match(lines[lines.length - 1], /test line/);
-  rmSync("/tmp/dsh-compaction-debug-test.log", { force: true });
+  rmSync(debugLogPath, { force: true });
 });
 
 test("resolveConfig validates retained-term budgets", () => {

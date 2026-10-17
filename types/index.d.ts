@@ -93,7 +93,11 @@ export interface InstantCompactionConfig {
     debugLogPath?: string;
 }
 
-/** Host-global settings-card subset; exactly one retention mode is active. */
+/**
+ * Settings-form subset served by the bundle's bridge row, as sparse user
+ * overrides; unset fields inherit the engine/composition defaults. A section
+ * carrying both retention modes resolves to ratio mode engine-side.
+ */
 export interface InstantCompactionSettings {
     checkpointCap?: number;
     auto?: boolean;
@@ -208,7 +212,9 @@ export interface CompiledRegion {
 export declare class InstantCompactionEngine extends CompactionEngineBase {
     static inject: string[];
     static Config: z<InstantCompactionConfig>;
+    /** Settings form namespace of the bundle's settings bridge row (composition row id). */
     static SETTINGS_NAMESPACE: 'compaction-instant';
+    /** Field constraints of the settings-form subset; the bridge serves them as volatile schema. */
     static SETTINGS_SCHEMA: z<InstantCompactionSettings>;
     readonly config: ResolvedInstantCompactionConfig;
     constructor(ctx: Context, config?: InstantCompactionConfig);
@@ -230,4 +236,15 @@ export declare class InstantCompactionEngine extends CompactionEngineBase {
     regionDependencies(): RegionDependencies;
 }
 
-export default InstantCompactionEngine;
+/**
+ * Root-module plugin: dispatches on the row's purpose. Composition rows naming
+ * this package mount the engine; the bundle's `compaction-instant-client`
+ * carrier row (`carrier: true`) stays inert so dsh-client-modules can bind the
+ * browser half to the bare package specifier without mounting a profile-level
+ * engine that would race preset-owned backends.
+ */
+export declare const InstantCompactionPlugin: {
+    Config: unknown;
+    apply(ctx: unknown, config?: InstantCompactionConfig & { carrier?: boolean }): Promise<void>;
+};
+export default InstantCompactionPlugin;

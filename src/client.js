@@ -1,7 +1,13 @@
 /**
- * Browser half of dsh-compaction-instant: a plugin configuration card under
- * Settings → Plugins, bound to the `compaction-instant` settings namespace
- * registered by the engine's Host half (src/index.js).
+ * Browser half of dsh-compaction-instant: the bundle's configuration section
+ * on the 0.2.0 Plugins page (`plugins.bundle.config`, keyed by the package
+ * name), bound to the `compaction-instant` settings form served from the
+ * bundle's bridge row (src/settings.js).
+ *
+ * DSH 0.2.0 serves volatile profile-entry configs as settings forms; edits go
+ * through the client `configForms` service and persist into the profile
+ * patch, applying live. The section registers only while the Host serves the
+ * namespace, so a deployment without the bridge row shows no trace of it.
  *
  * This file is served verbatim by the deployment's client-modules bundle
  * route, so it must be a self-contained lazy-CJS factory in the
@@ -10,11 +16,14 @@
  * (`@deepseek-ai/dsh-compaction-basic` — web profiles alias the official
  * package to this one so bundled agent presets keep resolving) and the real
  * unscoped package name. Exactly one of the two is required by the boot graph;
- * the other registration is inert.
+ * the other registration is inert. Each registration bakes its own package
+ * name into the factory, because the Plugins page keys bundle configuration
+ * sections by the installed package name.
  *
  * No TypeScript/JSX/bundler transforms run on this file.
  */
-function instantCompactionClientFactory(require) {
+function makeInstantCompactionClientFactory(bundlePackage) {
+  return function instantCompactionClientFactory(require) {
   var module = { exports: {} };
   var exports = module.exports;
   Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
@@ -24,18 +33,9 @@ function instantCompactionClientFactory(require) {
 
   // ── styles (injected once per page, matching the official cards' tokens) ──
   var css = [
-    ".dsci_card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}",
-    ".dsci_card:hover{border-color:var(--dsw-alias-label-dimmed)}",
-    ".dsci_cardOpen{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-label-dimmed)}",
-    ".dsci_header{appearance:none;width:100%;font:inherit;color:inherit;text-align:left;cursor:pointer;background:0 0;border:0;border-radius:12px;align-items:center;gap:12px;padding:14px 16px;display:flex}",
-    ".dsci_header:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-2px}",
-    ".dsci_headText{flex-direction:column;flex:1;gap:4px;min-width:0;display:flex}",
+    ".dsci_page{flex-direction:column;display:flex}",
     ".dsci_name{color:var(--dsw-alias-label-primary);font-size:15px;font-weight:600;line-height:1.4}",
-    ".dsci_description{color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:1.5}",
-    ".dsci_chevron{color:var(--dsw-alias-label-tertiary);flex:none;transition:transform .16s}",
-    ".dsci_chevronOpen{transform:rotate(180deg)}",
-    ".dsci_pending{white-space:nowrap;background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-secondary);border-radius:999px;flex:none;padding:1px 8px;font-size:11px;font-weight:500;line-height:17px}",
-    ".dsci_body{border-top:1px solid var(--dsw-alias-border-l2);margin:0 16px;padding-bottom:8px}",
+    ".dsci_description{color:var(--dsw-alias-label-tertiary);margin:4px 0 0;font-size:13px;line-height:1.5}",
     ".dsci_readOnly{color:var(--dsw-alias-label-tertiary);margin:12px 0 0;font-size:12px;line-height:1.5}",
     ".dsci_footer{border-top:1px solid var(--dsw-alias-border-l2);justify-content:flex-end;align-items:center;gap:8px;padding:12px 0 4px;display:flex}",
     ".dsci_failed{min-width:0;color:var(--dsw-alias-label-error);flex:1;margin:0;font-size:12px;line-height:1.5}",
@@ -97,10 +97,7 @@ function instantCompactionClientFactory(require) {
     saving: "保存中…",
     saveFailed: "保存失败",
     discard: "放弃",
-    unsaved: "未保存",
-    readOnly: "当前连接为只读，无法修改配置。",
-    expand: "展开",
-    collapse: "收起"
+    readOnly: "当前连接为只读，无法修改配置。"
   };
   var en = {
     title: "Instant Compaction",
@@ -124,10 +121,7 @@ function instantCompactionClientFactory(require) {
     saving: "Saving…",
     saveFailed: "Save failed",
     discard: "Discard",
-    unsaved: "Unsaved",
-    readOnly: "This connection is read-only.",
-    expand: "Expand",
-    collapse: "Collapse"
+    readOnly: "This connection is read-only."
   };
 
   // ── field specs ───────────────────────────────────────────────────────────
@@ -168,8 +162,13 @@ function instantCompactionClientFactory(require) {
       this.listeners = new Set();
       this.saving = false;
       this.failed = false;
-      scope.subscribe(function () { this.publish(); }.bind(this));
+      this.unsubscribe = scope.subscribe(this.publish.bind(this));
     }
+    /** Release the form subscription when the client fiber unloads. */
+    CardController.prototype.dispose = function () {
+      this.unsubscribe();
+      this.listeners.clear();
+    };
     /** Build the snapshot store the slot's `useCompactionCard` selector reads. */
     CardController.prototype.bind = function (project) {
       var store = createSnapshotStore(project());
@@ -280,9 +279,13 @@ function instantCompactionClientFactory(require) {
       this.failed = false;
       this.publish();
       var expectedRevision = this.scope.getSnapshot().revision;
-      this.scope.mutate(operations, expectedRevision).then(function () {
+      this.scope.mutate(operations, expectedRevision).then(function (accepted) {
+        // 0.1.7's form controller resolves false for a refused or superseded
+        // write after reloading Host state; an accepted write is already
+        // folded into the mirror, and the user-layer re-read below confirms
+        // the section landed the way the plan intended.
         var user = self.userLayer();
-        var landed = plan.every(function (item) {
+        var landed = accepted === true && plan.every(function (item) {
           if (item.op.op === "unset") return user === void 0 || !Object.prototype.hasOwnProperty.call(user, item.field);
           return user !== void 0 && user[item.field] === item.op.value;
         });
@@ -375,42 +378,23 @@ function instantCompactionClientFactory(require) {
     );
   }
 
-  /** Render the compaction-instant card; nothing while the namespace is unavailable. */
-  function CompactionCard(props) {
-    var open = React.useState(false);
-    var isOpen = open[0];
-    var setOpen = open[1];
+  /**
+   * Render the bundle's configuration section on its Plugins detail page;
+   * nothing while the Host serves no instant-compaction form.
+   */
+  function CompactionConfigPage(props) {
     var state = props.useCompactionCard(function (snapshot) { return snapshot; });
     var t = props.t;
+    if (props.view === "summary") return t("description");
     if (!state.available) return null;
     var blocked = !state.dirty || state.invalid || state.saving;
     var ratioMode = state.retainRatio.text !== "" && state.retainTokens.text === "";
     return React.createElement(
-      "li",
-      { className: "dsci_card" + (isOpen ? " dsci_cardOpen" : "") },
-      React.createElement(
-        "button",
-        {
-          type: "button",
-          className: "dsci_header",
-          "aria-expanded": isOpen,
-          "aria-label": t(isOpen ? "collapse" : "expand") + ": " + t("title"),
-          onClick: function () { setOpen(!isOpen); }
-        },
-        React.createElement(
-          "span",
-          { className: "dsci_headText" },
-          React.createElement("span", { className: "dsci_name" }, t("title")),
-          React.createElement("span", { className: "dsci_description" }, t("description"))
-        ),
-        state.dirty ? React.createElement("span", { className: "dsci_pending" }, t("unsaved")) : null,
-        React.createElement("span", { className: "dsci_chevron" + (isOpen ? " dsci_chevronOpen" : "") }, "▾")
-      ),
-      isOpen
-        ? React.createElement(
-            "div",
-            { className: "dsci_body" },
-            !state.writable ? React.createElement("p", { className: "dsci_readOnly", role: "status" }, t("readOnly")) : null,
+      "div",
+      { className: "dsci_page" },
+      React.createElement("span", { className: "dsci_name" }, t("title")),
+      React.createElement("p", { className: "dsci_description" }, t("description")),
+      !state.writable ? React.createElement("p", { className: "dsci_readOnly", role: "status" }, t("readOnly")) : null,
             React.createElement(ValueField, {
               id: "plugin-config-instant-cap",
               label: t("checkpointCap"),
@@ -506,21 +490,21 @@ function instantCompactionClientFactory(require) {
                 onClick: props.save
               }, t(state.saving ? "saving" : "save"))
             )
-          )
-        : null
     );
   }
 
   // ── plugin body ───────────────────────────────────────────────────────────
-  /** Namespace of the instant-compaction settings section (Host side registers it). */
+  /**
+   * Settings form namespace of the bundle's bridge row
+   * (dsh-compaction-instant/settings, composition row id).
+   */
   var SETTINGS_NAMESPACE = "compaction-instant";
   /** Required services (cordis fiber inject). */
-  var inject = ["slots", "locale", "connection", "remote", "settingsScope"];
+  var inject = ["slots", "locale", "configForms"];
 
   function apply(ctx) {
-    var t = ctx.locale.bind(NS);
     ctx.effect(function () { return ctx.locale.register(NS, { zh: zh, en: en }); }, "compaction-instant: settings dictionary");
-    var controller = new CardController(ctx.settingsScope.bind({ namespace: SETTINGS_NAMESPACE }), [
+    var controller = new CardController(ctx.configForms.get(SETTINGS_NAMESPACE), [
       numberField("checkpointCap"),
       booleanField("auto"),
       numberField("thresholdRatio"),
@@ -540,32 +524,40 @@ function instantCompactionClientFactory(require) {
         retainTokens: controller.field("retainTokens")
       };
     });
-    ctx.slots.inject("settings.plugin.item", function* () {
-      yield ctx.slots.register({
-        name: "settings.plugin.item",
-        key: "compaction-instant",
-        order: 30,
-        locale: NS,
-        inject: function () {
-          return {
-            hooks: { compactionCard: store },
-            ...controller.actions()
-          };
-        }
-      }, CompactionCard);
-    });
+    ctx.effect(function () { return function () { controller.dispose(); }; }, "compaction-instant: form subscription");
+    // The Plugins page owns the slot; the bridge row owns the namespace. Both
+    // must be live before the section registers, so a deployment without the
+    // bundle (or with its bridge row switched off) shows no trace of it.
+    ctx.effect(function () {
+      return ctx.configForms.whileServed([SETTINGS_NAMESPACE], function () {
+        return ctx.slots.inject("plugins.bundle.config", function () {
+          return ctx.slots.register({
+            name: "plugins.bundle.config",
+            key: bundlePackage,
+            locale: NS,
+            inject: function () {
+              return {
+                hooks: { compactionCard: store },
+                ...controller.actions()
+              };
+            }
+          }, CompactionConfigPage);
+        });
+      });
+    }, "compaction-instant: bundle configuration section");
   }
 
   exports.apply = apply;
   exports.inject = inject;
   return module.exports;
+  };
 }
 
 window.__ModuleLoader__.load({
   id: "@deepseek-ai/dsh-compaction-basic",
-  factory: instantCompactionClientFactory
+  factory: makeInstantCompactionClientFactory("@deepseek-ai/dsh-compaction-basic")
 });
 window.__ModuleLoader__.load({
   id: "dsh-compaction-instant",
-  factory: instantCompactionClientFactory
+  factory: makeInstantCompactionClientFactory("dsh-compaction-instant")
 });

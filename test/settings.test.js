@@ -1,21 +1,32 @@
 /**
- * Settings-namespace integration tests for the instant compaction engine.
+ * Settings-plane integration tests for the instant compaction engine: the
+ * bundle's volatile bridge row (src/settings.js) serves the
+ * `compaction-instant` form namespace on DSH 0.2.0, and every mounted engine
+ * overlays that sparse user layer on its own composition entry.
  * @module dsh-compaction-instant/test/settings
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import { Context } from "@deepseek-ai/cordis";
-import { SettingsProvider } from "@deepseek-ai/dsh-settings";
 import { InstantCompactionEngine } from "../src/index.js";
+import { Config as BridgeConfig, SETTINGS_NAMESPACE } from "../src/settings.js";
 
-class MemorySettings extends SettingsProvider {
-  writable = true;
-  document = {};
-  async load() {
-    return this.document;
+/** Minimal stand-in for the 0.2.0 settings plane the engine consumes. */
+class FakeSettingsPlane {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.sections = new Map();
+    this.revision = 0;
   }
-  async persist(namespace, section) {
-    this.document = { ...this.document, [namespace]: section };
+  describe() {
+    return Array.from(this.sections, ([ns, value]) => ({ ns, value }));
+  }
+  /** Serve, replace, or remove (undefined) one namespace's section. */
+  setSection(ns, value) {
+    if (value === undefined) this.sections.delete(ns);
+    else this.sections.set(ns, value);
+    this.revision += 1;
+    this.ctx.emit("settings/document-updated", ns, this.revision);
   }
 }
 
@@ -27,9 +38,20 @@ function provideEngineServices(ctx) {
   ctx.provide("sessions", {});
 }
 
-test("SETTINGS_SCHEMA accepts partial values while engine defaults stay authoritative", () => {
-  const schema = InstantCompactionEngine.SETTINGS_SCHEMA;
-  assert.deepEqual(schema({}), {});
+function mount(ctx, config) {
+  provideEngineServices(ctx);
+  const plane = new FakeSettingsPlane(ctx);
+  ctx.provide("settings", plane);
+  return plane;
+}
+
+test("bridge schema serves a sparse section and keeps engine defaults authoritative", () => {
+  const empty = BridgeConfig({});
+  for (const field of ["checkpointCap", "auto", "thresholdRatio", "retainTurns", "retainRatio", "retainTokens"]) {
+    assert.equal(empty[field].get(), undefined, field);
+  }
+  assert.equal(SETTINGS_NAMESPACE, "compaction-instant");
+  assert.equal(InstantCompactionEngine.SETTINGS_NAMESPACE, SETTINGS_NAMESPACE);
   const engine = new InstantCompactionEngine(new Context(), { auto: false });
   assert.equal(engine.config.checkpointCap, 65536);
   assert.equal(engine.config.auto, false);
@@ -38,133 +60,122 @@ test("SETTINGS_SCHEMA accepts partial values while engine defaults stay authorit
   assert.equal(engine.config.retainTokens, 5120);
 });
 
-test("SETTINGS_SCHEMA validates user overrides and rejects malformed values", () => {
-  const schema = InstantCompactionEngine.SETTINGS_SCHEMA;
-  assert.equal(schema({ checkpointCap: 131072 }).checkpointCap, 131072);
-  assert.equal(schema({ auto: false }).auto, false);
-  assert.equal(schema({ thresholdRatio: 0.25 }).thresholdRatio, 0.25);
-  assert.equal(schema({ retainTurns: 3 }).retainTurns, 3);
-  assert.equal(schema({ retainRatio: 0.2 }).retainRatio, 0.2);
-  assert.equal(schema({ retainTokens: 50000 }).retainTokens, 50000);
-  assert.throws(() => schema({ checkpointCap: -1 }));
-  assert.throws(() => schema({ checkpointCap: 1.5 }));
-  assert.throws(() => schema({ thresholdRatio: 1.5 }));
-  assert.throws(() => schema({ thresholdRatio: -0.1 }));
-  assert.throws(() => schema({ retainTurns: 0 }));
-  assert.throws(() => schema({ retainTurns: 1.5 }));
-  assert.throws(() => schema({ retainRatio: -0.1 }));
-  assert.throws(() => schema({ retainTokens: -1 }));
-  assert.throws(() => schema({ auto: "yes" }));
+test("bridge schema validates user overrides and rejects malformed values", () => {
+  assert.equal(BridgeConfig({ checkpointCap: 131072 }).checkpointCap.get(), 131072);
+  assert.equal(BridgeConfig({ auto: false }).auto.get(), false);
+  assert.equal(BridgeConfig({ thresholdRatio: 0.25 }).thresholdRatio.get(), 0.25);
+  assert.equal(BridgeConfig({ retainTurns: 3 }).retainTurns.get(), 3);
+  assert.equal(BridgeConfig({ retainRatio: 0.2 }).retainRatio.get(), 0.2);
+  assert.equal(BridgeConfig({ retainTokens: 50000 }).retainTokens.get(), 50000);
+  assert.throws(() => BridgeConfig({ checkpointCap: -1 }));
+  assert.throws(() => BridgeConfig({ checkpointCap: 1.5 }));
+  assert.throws(() => BridgeConfig({ thresholdRatio: 1.5 }));
+  assert.throws(() => BridgeConfig({ thresholdRatio: -0.1 }));
+  assert.throws(() => BridgeConfig({ retainTurns: 0 }));
+  assert.throws(() => BridgeConfig({ retainTurns: 1.5 }));
+  assert.throws(() => BridgeConfig({ retainRatio: -0.1 }));
+  assert.throws(() => BridgeConfig({ retainTokens: -1 }));
+  assert.throws(() => BridgeConfig({ auto: "yes" }));
 });
 
-test("rc.1 SettingsProvider installSection drives updates and is shared by later engines", async () => {
+test("the served form drives updates and is shared by every mounted engine", async () => {
   const ctx = new Context();
-  provideEngineServices(ctx);
-  const provider = ctx.plugin(MemorySettings);
-  await provider;
+  const plane = mount(ctx);
+  plane.setSection(SETTINGS_NAMESPACE, { checkpointCap: 32768 });
   const firstCtx = ctx.isolate(["compaction"]);
   const secondCtx = ctx.isolate(["compaction"]);
-  const firstFiber = firstCtx.plugin(InstantCompactionEngine, { auto: false, checkpointCap: 32768 });
+  const firstFiber = firstCtx.plugin(InstantCompactionEngine, { auto: false, checkpointCap: 16384 });
   const secondFiber = secondCtx.plugin(InstantCompactionEngine, { auto: false, retainRatio: 0.2 });
   await Promise.all([firstFiber, secondFiber]);
   const first = firstCtx.compaction;
   const second = secondCtx.compaction;
   await settleCordis();
-  assert.deepEqual(ctx.settings.get("compaction-instant"), {
-    checkpointCap: 32768,
-    auto: false,
-    thresholdRatio: 0.5,
-    retainTurns: 1,
-    retainTokens: 5120
-  });
 
-  await ctx.settings.update("compaction-instant", { checkpointCap: 131072 });
+  // Sparse overlay: checkpointCap follows the section, everything else inherits.
+  assert.equal(first.config.checkpointCap, 32768);
+  assert.equal(first.config.auto, false);
+  assert.equal(first.config.retainTokens, 5120);
+  assert.equal(second.config.checkpointCap, 32768);
+  assert.equal(second.config.retainRatio, 0.2);
+
+  plane.setSection(SETTINGS_NAMESPACE, { checkpointCap: 131072, retainTokens: 4096 });
   await settleCordis();
   assert.equal(first.config.checkpointCap, 131072);
-  await assert.rejects(
-    ctx.settings.update("compaction-instant", { retainRatio: 0.2 }),
-    /mutually exclusive/
-  );
-
-  assert.equal(second.config.checkpointCap, 131072);
-  assert.equal(second.config.retainRatio, undefined);
-  assert.equal(second.config.retainTokens, 5120);
-  await ctx.settings.update("compaction-instant", { retainTokens: 4096 });
-  await settleCordis();
   assert.equal(first.config.retainTokens, 4096);
-  assert.equal(second.config.retainTokens, 4096);
-
-  await firstFiber.dispose();
-  await settleCordis();
-  await settleCordis();
-  assert.equal(ctx.settings.get("compaction-instant").retainTokens, 4096);
   assert.equal(second.config.checkpointCap, 131072);
+  // A served retainTokens mode clears the entry's ratio mode.
+  assert.equal(second.config.retainRatio, undefined);
   assert.equal(second.config.retainTokens, 4096);
 
-  await ctx.settings.replace("compaction-instant", {});
+  // A section carrying both retention modes resolves to ratio mode engine-side.
+  plane.setSection(SETTINGS_NAMESPACE, { retainRatio: 0.3, retainTokens: 4096 });
   await settleCordis();
-  assert.equal(ctx.settings.get("compaction-instant").checkpointCap, 32768);
-  assert.equal(ctx.settings.get("compaction-instant").retainTokens, 5120);
-  assert.equal(second.config.checkpointCap, 32768);
-  assert.equal(second.config.retainTokens, 5120);
+  assert.equal(first.config.retainRatio, 0.3);
+  assert.equal(first.config.retainTokens, undefined);
+  assert.equal(second.config.retainRatio, 0.3);
 
-  await provider.dispose();
+  // The bridge row leaving the served set returns engines to composition-only.
+  plane.setSection(SETTINGS_NAMESPACE, undefined);
   await settleCordis();
+  assert.equal(first.config.checkpointCap, 16384);
+  assert.equal(first.config.retainTokens, 5120);
   assert.equal(second.config.checkpointCap, 65536);
   assert.equal(second.config.retainRatio, 0.2);
+
+  await firstFiber.dispose();
   await secondFiber.dispose();
 });
 
-test("an incompatible follower falls back composition-only without leaking settings membership", async () => {
+test("an incompatible section falls back composition-only until it becomes valid", async () => {
   const ctx = new Context();
-  provideEngineServices(ctx);
-  const provider = ctx.plugin(MemorySettings);
-  await provider;
+  const plane = mount(ctx);
+  plane.setSection(SETTINGS_NAMESPACE, { checkpointCap: 12345 });
   const ownerCtx = ctx.isolate(["compaction"]);
-  const ownerFiber = ownerCtx.plugin(InstantCompactionEngine, { auto: false, thresholdRatio: 0.3 });
-  await ownerFiber;
-  await settleCordis();
-
   const followerCtx = ctx.isolate(["compaction"]);
+  const ownerFiber = ownerCtx.plugin(InstantCompactionEngine, { auto: false, thresholdRatio: 0.3 });
   const followerFiber = followerCtx.plugin(InstantCompactionEngine, {
     auto: false,
     thresholdRatio: 0.5,
     modelPolicies: [{ provider: "p", model: "m", retainRatio: 0.4 }]
   });
-  await followerFiber;
+  await Promise.all([ownerFiber, followerFiber]);
+  const owner = ownerCtx.compaction;
+  const follower = followerCtx.compaction;
   await settleCordis();
-  assert.equal(followerCtx.compaction.config.thresholdRatio, 0.5);
-  assert.equal(followerCtx.compaction.config.modelPolicies[0].retainRatio, 0.4);
+  assert.equal(owner.config.checkpointCap, 12345);
+  assert.equal(follower.config.checkpointCap, 12345);
 
-  await ctx.settings.update("compaction-instant", { checkpointCap: 12345 });
-  assert.equal(ownerCtx.compaction.config.checkpointCap, 12345);
-  assert.equal(followerCtx.compaction.config.checkpointCap, 65536);
+  // retainRatio 0.35 breaks the owner (threshold 0.3) but not the follower
+  // (threshold 0.5); the owner alone falls back, and both recover together.
+  plane.setSection(SETTINGS_NAMESPACE, { retainRatio: 0.35 });
+  await settleCordis();
+  assert.equal(owner.config.retainRatio, undefined);
+  assert.equal(owner.config.thresholdRatio, 0.3);
+  assert.equal(follower.config.retainRatio, 0.35);
+  assert.equal(follower.config.modelPolicies[0].retainRatio, 0.4);
+
+  plane.setSection(SETTINGS_NAMESPACE, { retainRatio: 0.2 });
+  await settleCordis();
+  assert.equal(owner.config.retainRatio, 0.2);
+  assert.equal(follower.config.retainRatio, 0.2);
+
   await followerFiber.dispose();
   await ownerFiber.dispose();
-  await settleCordis();
-  assert.equal(ctx.settings.get("compaction-instant"), undefined);
-  await provider.dispose();
 });
 
 test("ratio-based composition stays ratio-based through the settings layer", async () => {
   const ctx = new Context();
-  const provider = ctx.plugin(MemorySettings);
-  await provider;
+  const plane = mount(ctx);
+  plane.setSection(SETTINGS_NAMESPACE, { retainRatio: 0.1 });
   const engine = new InstantCompactionEngine(ctx, { auto: false, retainRatio: 0.2 });
   await settleCordis();
-  const section = ctx.settings.get("compaction-instant");
-  assert.equal(section.retainRatio, 0.2);
-  assert.equal(section.retainTokens, undefined);
-
-  await ctx.settings.update("compaction-instant", { checkpointCap: 32768, retainRatio: 0.1 });
-  await settleCordis();
-  assert.equal(engine.config.checkpointCap, 32768);
   assert.equal(engine.config.retainRatio, 0.1);
   assert.equal(engine.config.retainTokens, undefined);
-  await assert.rejects(
-    ctx.settings.update("compaction-instant", { retainTokens: 2048 }),
-    /mutually exclusive/
-  );
 
-  await provider.dispose();
+  plane.setSection(SETTINGS_NAMESPACE, { checkpointCap: 32768 });
+  await settleCordis();
+  assert.equal(engine.config.checkpointCap, 32768);
+  // No retention field in the section: the entry's ratio mode survives.
+  assert.equal(engine.config.retainRatio, 0.2);
+  assert.equal(engine.config.retainTokens, undefined);
 });

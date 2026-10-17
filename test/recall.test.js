@@ -6,6 +6,9 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import { createAssistantMessage, createToolResultMessage, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { Session } from "@deepseek-ai/dsh-session";
@@ -42,9 +45,9 @@ function makeIdleSession() {
   const seed = [
     { type: "turn/start", seq: 0, time: 1, data: { turn: 1 } },
     { type: "user/message", seq: 1, time: 2, data: user, surfaceOp: "append" },
-    { type: "assistant/message", seq: 2, time: 3, data: { message: assistant }, surfaceOp: "append" },
+    { type: "assistant/message", seq: 2, time: 3, data: { turn: 1, step: 1, stream: [], message: assistant }, surfaceOp: "append" },
     { type: "tool/result", seq: 3, time: 4, data: { message: result }, surfaceOp: "append" },
-    { type: "assistant/message", seq: 4, time: 5, data: { message: assistant2 }, surfaceOp: "append" },
+    { type: "assistant/message", seq: 4, time: 5, data: { turn: 1, step: 2, stream: [], message: assistant2 }, surfaceOp: "append" },
     { type: "turn/end", seq: 5, time: 6, data: { turn: 1 } }
   ];
   return Session.create("session-recall", seed);
@@ -89,7 +92,7 @@ test("recallSession restores exact original content with role headers", () => {
   assert.match(result.text, /\[seq 2: assistant\]\non it/);
   assert.match(result.text, /\[reasoning\]\nthe counter overflows here/);
   assert.match(result.text, /\[tool-call read\]\n\{"file_path":"a\.js","offset":1\}/);
-  assert.match(result.text, /\[seq 3: user\]\n\[tool-result\]\nconst counter = 0;/);
+  assert.match(result.text, /\[seq 3: tool\]\nconst counter = 0;/);
   assert.match(result.text, /\[seq 4: assistant\]\ndone/);
 });
 
@@ -159,7 +162,7 @@ test("searchSession finds matching events with seq pointers and matched lines", 
   assert.match(result.text, /\[search "counter": 2 matching event\(s\)\]/);
   assert.match(result.text, /\[seq 2: assistant\]/);
   assert.match(result.text, /the counter overflows here/);
-  assert.match(result.text, /\[seq 3: user\]/);
+  assert.match(result.text, /\[seq 3: tool\]/);
   assert.match(result.text, /const counter = 0;/);
   assert.match(result.text, /recall with a \(seq N\) pointer/);
 });
@@ -260,7 +263,7 @@ test("recall tool restores by type seq, result, and checkpoint", async () => {
   assert.match(seq.text, /please fix the bug/);
   const result = await tool.execute({ type: "result", id: "result 3" }, { agent: { session } });
   assert.equal(result.recalled, 1);
-  assert.match(result.text, /\[seq 3: user\]/);
+  assert.match(result.text, /\[seq 3: tool\]/);
   assert.match(result.text, /const counter = 0;/);
   const checkpoint = await tool.execute({ type: "checkpoint", id: "1" }, { agent: { session } });
   assert.equal(checkpoint.recalled, 1);
@@ -458,7 +461,7 @@ test("recall and search restore the exact originals after compaction", async () 
   assert.equal(recalled.truncated, false);
   assert.match(recalled.text, /\[seq 1: user\]\nplease fix the bug/);
   assert.match(recalled.text, /\[tool-call read\]\n\{"file_path":"a\.js","offset":1\}/);
-  assert.match(recalled.text, /\[seq 3: user\]\n\[tool-result\]\nconst counter = 0;/);
+  assert.match(recalled.text, /\[seq 3: tool\]\nconst counter = 0;/);
   // The grep view finds the shadowed content without knowing its seq.
   // Reasoning was elided from the checkpoint, so it is only in the log.
   const found = searchSession(session, "overflows", SEARCH_CONFIG);
@@ -469,4 +472,26 @@ test("recall and search restore the exact originals after compaction", async () 
   const broad = searchSession(session, "counter", SEARCH_CONFIG);
   assert.ok(broad.totalMatches >= 2, `found ${broad.totalMatches} matches`);
   assert.ok(broad.hits.some((hit) => hit.seq === 3), "original tool result hit");
+
+  // File serialization/readback exercises the real seed/load validator, not
+  // merely append. This is not a full host SessionStore restart.
+  const log = Array.from({ length: session.seq }, (_, seq) => session.eventAt(seq));
+  const directory = await mkdtemp(join(tmpdir(), "instant-recall-replay-"));
+  let restored;
+  try {
+    const path = join(directory, "session.json");
+    await writeFile(path, JSON.stringify(log), "utf8");
+    restored = Session.create("replayed-compaction", JSON.parse(await readFile(path, "utf8")));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+  assert.deepEqual(restored.surface.nodes, session.surface.nodes);
+  assert.deepEqual(restored.deriveMessages(), session.deriveMessages());
+  assert.deepEqual(recallSession(restored, [{ start: 1, end: 3 }], {
+    maxRecallTokens: DEFAULT_MAX_RECALL_TOKENS
+  }), recalled);
+  assert.deepEqual(searchSession(restored, "overflows", SEARCH_CONFIG), found);
+  assert.deepEqual(resolveRecallReference(restored, "result", "result 3").selections, [{ start: 3, end: 3 }]);
+  const checkpointSeq = compaction.summarySeq + 1;
+  assert.deepEqual(resolveRecallReference(restored, "checkpoint", "1").selections, [{ start: checkpointSeq, end: checkpointSeq }]);
 });

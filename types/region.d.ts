@@ -49,7 +49,10 @@ export interface CompactionOptions {
     flush?: () => Promise<void>;
 }
 
-/** Resolve the next head-anchored, tool-pairing-balanced range. */
+/** Resolve a tool-pairing-balanced range after a leading system/message, if present.
+ * Later system messages are compactable history. Retain the preferred recent
+ * turns within the token ceiling (0 means turns only); pairing may exceed it.
+ */
 export declare function selectCompactableRange(session: Session, measurement: TokenMeasurement, retainTurns: number, retainTokens: number): { start: SessionSeq; end: SessionSeq } | null;
 /** Run the single durable compaction transaction over one positional span. */
 export declare function compactSurfaceRegion(dependencies: RegionDependencies, session: Session, start: SessionSeq, end: SessionSeq, agent: CompactionAgentContext | undefined, options: CompactionOptions, signal: AbortSignal | undefined): Promise<CompactionResult>;
@@ -57,7 +60,10 @@ export declare function compactSurfaceRegion(dependencies: RegionDependencies, s
 export declare function fenceCode(text: string): string;
 /** Recheck the durable compaction lock after an asynchronous policy decision. */
 export declare function assertNoActiveCompaction(session: Session, stage: string): void;
-/** Validate one requested surface-position span before any work begins. */
+/** Validate one requested surface-position span before any work begins.
+ * Reject a span containing the system/message at surface position 0 before
+ * compaction/start is appended; later system messages remain valid targets.
+ */
 export declare function validateSurfaceRegion(session: Session, start: SessionSeq, end: SessionSeq): {
     start: SessionSeq;
     end: SessionSeq;

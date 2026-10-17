@@ -14,7 +14,7 @@
  *
  * @module dsh-compaction-instant/recall
  */
-import { estimateEntryTokens, isCheckpointSource, projectToolResultText, sanitize, truncateTokens } from "./compiler.js";
+import { estimateEntryTokens, isCheckpointSource, sanitize, truncateTokens } from "./compiler.js";
 
 /** Default total budget for one recall operation, in density-aware tokens. */
 export const DEFAULT_MAX_RECALL_TOKENS = 16000;
@@ -62,8 +62,9 @@ export function parseSeqSpec(input) {
 /**
  * Project one derived message into plain text, keeping everything: text,
  * reasoning, raw tool-call arguments, and nested tool-result content.
- * Recall is the lossless layer, so nothing is elided here except media,
- * which renders as labels (their bytes live in the attachment service).
+ * File blocks preserve durable attachment reference metadata, not file contents
+ * or an invented saved path. Images render as labels; attachment bytes remain
+ * in the attachment service. Nested tool results use this same projection.
  * @param message - derived message (`Session.deriveEventMessage` output).
  * @returns full plain-text projection.
  */
@@ -81,8 +82,13 @@ export function projectMessageText(message) {
         parts.push(`[tool-call ${block.name ?? "unknown"}]\n${sanitize(block.arguments ?? "")}`);
         break;
       case "tool-result":
-        parts.push(`[tool-result]\n${projectToolResultText(block.content ?? [])}`);
+        parts.push(`[tool-result]\n${projectMessageText({ content: block.content ?? [] })}`);
         break;
+      case "file": {
+        const { attachmentId, name, bytes } = block.attachment;
+        parts.push(`[file attachment reference: ${sanitize(JSON.stringify({ attachmentId, name, bytes }))}; file contents not included]`);
+        break;
+      }
       case "image":
         parts.push("[image]");
         break;

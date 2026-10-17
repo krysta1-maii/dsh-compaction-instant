@@ -1,17 +1,35 @@
-# dsh-compaction-instant bundle layer for DSH 0.1.2-rc.1.
+# dsh-compaction-instant 0.2.0 bundle layer for DSH 0.2.0.
+# Verified target: 639ed015397290b3745d163aafe02ffee4aa3f84 (dsh-v0.2.0-rc.2); rc.1 remains supported.
 #
-# DSH 0.1.2 owns compaction backends on the per-agent preset plane. A
-# host-level engine would receive every scoped agent event and race the engine
-# selected by standard/ptc/cordis, so this bundle deliberately installs only
-# the globally inherited recall companions. Activate the engine by aliasing the
-# built-in package or by copying a preset and replacing its compaction row (see
-# README). The Web bundle already disables its legacy host compaction row.
+# Companion rows only: loading this bundle does NOT activate the engine.
+# Override the preset's isolated compaction group in the profile patch so its
+# engine row names dsh-compaction-instant; the carrier row below is explicitly
+# inert and must not be given engine configuration.
 #
-# The user's profile patch is applied after this bundle, so per-profile
-# overrides of these companion rows still win.
+# The compaction-instant row is the settings bridge: its volatile Config
+# schema makes DSH 0.2.0 serve the compaction-instant settings form, so the
+# Plugins page can edit engine preferences live (persisted into the profile
+# patch). Disable the row and every engine falls back to composition-only.
+#
+# The compaction-instant-client row carries the browser half: dsh-client-modules
+# mounts a bundle's client module on the profile row whose specifier is exactly
+# the package name, so this row names the bare package with carrier: true,
+# which the root module dispatches to a no-op (no profile-level engine that
+# could race the preset-owned backend). Disable the row and the Plugins page
+# configuration section disappears; the engines keep working composition-only.
+#
+# Source edits do not update tarball deployments: repack and reinstall into
+# the actual profile, then obtain user confirmation before host reload/restart.
+# The user's later profile patch can override these rows.
 
 - insert:
     - id: tool-recall
       name: dsh-compaction-instant/tool
     - id: command-recall
       name: dsh-compaction-instant/command
+    - id: compaction-instant
+      name: dsh-compaction-instant/settings
+    - id: compaction-instant-client
+      name: dsh-compaction-instant
+      config:
+        carrier: true

@@ -1,13 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { CommandId } from '@deepseek-ai/dsh-commands/brand';
 import type { CompactionEngine, CompactionTrigger, ManualCompactAgentContext } from '@deepseek-ai/dsh-compaction';
-import type { Session, SessionSeq } from '@deepseek-ai/dsh-session';
+import type { Session, SessionSeq, SessionEventMap, SurfaceOp } from '@deepseek-ai/dsh-session';
 import type { TokenMeasurement } from '@deepseek-ai/dsh-token-meter';
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools';
 
-import InstantCompactionEngine, {
+import InstantCompactionPlugin, {
   COMPILER_MODEL,
   COMPILER_PROVIDER,
+  InstantCompactionEngine,
   TargetPressureConfigError,
   resolveCompactSpec,
   resolveConfig,
@@ -101,6 +102,9 @@ import {
 const publicConfig: InstantCompactionConfig = { retainRatio: 0.2, thresholdRatio: 0.5 };
 const publicSettings: InstantCompactionSettings = InstantCompactionEngine.SETTINGS_SCHEMA({ retainRatio: 0.2 });
 void [InstantCompactionEngine.SETTINGS_NAMESPACE, publicSettings];
+// The root default export is the dispatcher: carrier rows no-op, engine rows mount.
+const carrierRowConfig: InstantCompactionConfig & { carrier?: boolean } = { carrier: true };
+void [InstantCompactionPlugin, carrierRowConfig];
 const resolved = resolveConfig(publicConfig);
 const policy: ResolvedTargetPolicy = resolveTargetPolicy(resolved, { provider: 'p', model: 'm' });
 const compactSpec: ResolvedCompactSpec = resolveCompactSpec(policy, 100_000);
@@ -109,7 +113,7 @@ const concreteThresholdTokens: number = compactSpec.thresholdTokens;
 void [policy.target.provider, concreteRetainTokens, concreteThresholdTokens];
 void [COMPILER_MODEL, COMPILER_PROVIDER, TargetPressureConfigError];
 
-export function checkRc1Contracts(
+export function checkRc2Contracts(
   ctx: Context,
   session: Session,
   seq: SessionSeq,
@@ -117,10 +121,24 @@ export function checkRc1Contracts(
   agent: ManualCompactAgentContext,
   commandId: CommandId,
   signal: AbortSignal,
+  assistantMessage: SessionEventMap['assistant/message']['message'],
 ): void {
   const engine = null as unknown as InstantCompactionEngine;
   const seam: CompactionEngine = engine;
   const trigger: CompactionTrigger = 'pressure';
+  const overflowTrigger: CompactionTrigger = 'context-overflow';
+  const replacement: SurfaceOp = { op: 'replace', startSeq: seq, endSeq: seq };
+  const settlement: SessionEventMap['assistant/message'] = {
+    turn: 1, step: 1, stream: [], message: assistantMessage,
+  };
+  // @ts-expect-error 0.2.0 requires settlement provenance, not message alone.
+  const obsoleteSettlement: SessionEventMap['assistant/message'] = { message: settlement.message };
+  // @ts-expect-error 0.2.0 replacements are positional, not a seq-list operation.
+  const obsoleteReplacement: SurfaceOp = { replace: [seq] };
+  // @ts-expect-error 0.1.2-rc.1 start/end fields were renamed to startSeq/endSeq.
+  const previousReplacement: SurfaceOp = { op: 'replace', start: seq, end: seq };
+  void [replacement, obsoleteSettlement, obsoleteReplacement, previousReplacement];
+  void seam.compactIfNeeded(agent, overflowTrigger, signal);
   const recallable: RecallableSession = session;
   const searchable: SearchableSession = session;
   const selection = validateSurfaceRegion(session, seq, seq);

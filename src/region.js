@@ -2,12 +2,12 @@
  * Surface retention selection and the shared log-recorded compaction
  * transaction for `dsh-compaction-instant`.
  *
- * This module ports the durable protocol of `@deepseek-ai/dsh-compaction-basic`
- * verbatim — lock entry assertions, `compaction/start|summary|end` bracketing,
+ * This module follows the DSH 0.2.0 durable compaction protocol —
+ * lock entry assertions, `compaction/start|summary|end` bracketing,
  * checkpoint replacement provenance, surface-stability checks, flush handling,
  * and the `busy`/`changed`/`summary`/`commit`/`persistence` failure vocabulary —
- * so the instant backend remains a contract-exact drop-in replacement for the
- * `/compact` command and every other `ctx.compaction` consumer.
+ * so the instant backend implements the `ctx.compaction` transaction seam.
+ * Range selection retains instant's own whole-turn/token-ceiling policy.
  *
  * The ONLY replaced step is summarization: where basic awaits an LLM replay,
  * this backend runs the deterministic VCC-style compiler (see compiler.js),
@@ -56,7 +56,8 @@ function turnStartIndex(turns, index) {
 
 /**
  * Resolve the next head-anchored range while retaining a recent tail and
- * never splitting an assistant tool-call/result pair.
+ * never splitting an assistant tool-call/result pair. Only a system/message
+ * at surface position 0 is protected; later system updates are ordinary history.
  *
  * The retained region is selected backward from the latest turn:
  *
@@ -79,18 +80,21 @@ export function selectCompactableRange(session, measurement, retainTurns, retain
   if (pricedNodes.length === 0) return null;
   const surfaceNodes = session.surface.nodes;
   if (surfaceNodes.length !== pricedNodes.length || surfaceNodes.some((seq, index) => seq !== pricedNodes[index]?.seq)) throw new Error("compaction: token-meter surface does not match the current session surface");
+  // Only the current surface head is protected; later system updates are history.
+  const firstIdx = session.eventAt(surfaceNodes[0]).type === "system/message" ? 1 : 0;
   const turns = surfaceTurns(session, surfaceNodes);
   const lastTurn = turns[turns.length - 1];
   if (lastTurn === 0) return null;
   const preferredTurns = Math.max(1, retainTurns);
   let keepFromIdx;
   if (retainTokens > 0) {
-    // Absolute ceiling: roll whole turns backward while they fit.
+    // Absolute ceiling: roll whole turns backward while they fit. The protected
+    // head is not retained history, even when it belongs to the first turn.
     let scanIdx = turns.length;
     let total = 0;
     let latestWholeIdx;
-    while (scanIdx > 0) {
-      const startIdx = turnStartIndex(turns, scanIdx - 1);
+    while (scanIdx > firstIdx) {
+      const startIdx = Math.max(firstIdx, turnStartIndex(turns, scanIdx - 1));
       let added = 0;
       for (let index = startIdx; index < scanIdx; index += 1) added += pricedNodes[index].tokens;
       if (total + added > retainTokens) break;
@@ -103,7 +107,7 @@ export function selectCompactableRange(session, measurement, retainTurns, retain
       // fits inside it (then the balance guard recedes as usual).
       let nodeTotal = 0;
       keepFromIdx = turns.length;
-      const latestStart = turnStartIndex(turns, turns.length - 1);
+      const latestStart = Math.max(firstIdx, turnStartIndex(turns, turns.length - 1));
       for (let index = turns.length - 1; index >= latestStart; index -= 1) {
         if (nodeTotal + pricedNodes[index].tokens > retainTokens) break;
         nodeTotal += pricedNodes[index].tokens;
@@ -118,16 +122,21 @@ export function selectCompactableRange(session, measurement, retainTurns, retain
     void preferredTurns;
   } else {
     const mandatoryTurnFloor = Math.max(0, lastTurn - preferredTurns + 1);
-    keepFromIdx = 0;
+    keepFromIdx = firstIdx;
     while (keepFromIdx < turns.length && turns[keepFromIdx] < mandatoryTurnFloor) keepFromIdx += 1;
   }
-  while (keepFromIdx > 0) {
-    if (toolPairingBalancedBefore(session, surfaceNodes[keepFromIdx])) break;
+  while (keepFromIdx > firstIdx) {
+    // A ceiling below one node can leave an empty retained suffix. The cut
+    // is then after the tail, not before an undefined surface sequence.
+    const balanced = keepFromIdx === surfaceNodes.length
+      ? toolPairingBalancedAfter(session, surfaceNodes[keepFromIdx - 1])
+      : toolPairingBalancedBefore(session, surfaceNodes[keepFromIdx]);
+    if (balanced) break;
     keepFromIdx -= 1;
   }
-  if (keepFromIdx === 0) return null;
+  if (keepFromIdx <= firstIdx) return null;
   return {
-    start: surfaceNodes[0],
+    start: surfaceNodes[firstIdx],
     end: surfaceNodes[keepFromIdx - 1]
   };
 }
@@ -261,6 +270,7 @@ export function validateSurfaceRegion(session, start, end) {
   if (startIdx === -1) throw new Error(`compactRegion: start seq ${start} not found in surface`);
   if (endIdx === -1) throw new Error(`compactRegion: end seq ${end} not found in surface`);
   if (startIdx > endIdx) throw new Error(`compactRegion: start seq ${start} (position ${startIdx}) is after end seq ${end} (position ${endIdx}) on the surface`);
+  if (startIdx === 0 && session.eventAt(nodes[0]).type === "system/message") throw new Error("compactRegion: cannot compact the system/message at surface head");
   if (!toolPairingBalancedBefore(session, nodes[startIdx])) throw new Error(`compactRegion: start seq ${start} is not a balanced boundary (would split a step's tool-call/result pair)`);
   if (!toolPairingBalancedAfter(session, nodes[endIdx])) throw new Error(`compactRegion: end seq ${end} is not a balanced boundary (would split a step, or the step is still open)`);
   return {
@@ -394,8 +404,8 @@ function commitCompactionBody(session, startEvent, compiled) {
   session.append("user/message", checkpointMessage, {
     surfaceOp: {
       op: "replace",
-      start,
-      end
+      startSeq: start,
+      endSeq: end
     },
     sourceEventSeqs: [
       startEvent.seq,

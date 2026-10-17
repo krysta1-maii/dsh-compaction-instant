@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Instant, near-lossless context compaction for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — a **drop-in replacement for `@deepseek-ai/dsh-compaction-basic`** that replaces LLM summarization with the deterministic conversation-compiler principle of [lllyasviel/VCC](https://github.com/lllyasviel/VCC).
+Instant, near-lossless context compaction for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — an **alternative backend for `@deepseek-ai/dsh-compaction-basic`** that replaces LLM summarization with the deterministic conversation-compiler principle of [lllyasviel/VCC](https://github.com/lllyasviel/VCC).
 
 A compaction compresses a shadowed history span in **milliseconds, with zero model calls**, keeping **original tokens only** — no paraphrase, no hallucination, no summarizer cost. Everything that is cut is still recoverable through `(seq N)` pointers into the durable session log.
 
@@ -11,15 +11,26 @@ A compaction compresses a shadowed history span in **milliseconds, with zero mod
 - **LLM-free** — compaction never invokes a model. No summarizer prompt, no inference latency, no token spend; the compile is deterministic text processing, so a million-token history compresses in milliseconds.
 - **Near-lossless** — output contains only original tokens; every cut is marked and points at its durable `seq`, and prior checkpoints are copied verbatim.
 - **Instant** — a single deterministic pass over the shadowed nodes; no network, no model, no KV-cache concerns.
-- **Contract-exact drop-in** — same seam, events, provenance and failure vocabulary as `compaction-basic`; every compaction-enabled built-in preset loads it unchanged (alias install).
+- **Version-targeted backend** — uses the DSH compaction service and durable event protocol; activate it explicitly in a custom preset. Configuration and retention policy are not identical to the current `compaction-basic`.
 
 ## Compatibility
 
 | dsh-compaction-instant | DeepSeek Harness | Node.js |
 |---|---|---|
-| `0.1.5` | `0.1.2-rc.1` | `>=22.12.0` |
+| `0.2.0` | `0.2.0-rc.1`, `0.2.0-rc.2` | `>=22.12.0` |
+| `0.1.8` | `0.1.7` | `>=22.12.0` |
+| `0.1.7` | `0.1.7` | `>=22.12.0` |
+| `0.1.6` | `0.1.5-rc.1` | `>=22.12.0` |
 
-Version 0.1.5 uses the immutable `Session.eventAt()` / `snapshotEvents()` API, the dual route/heuristic token-meter protocol, and the preset-owned compaction topology introduced by DSH 0.1.2-rc.1. Older Harness prereleases are not supported by this release.
+Version 0.2.0 targets DSH **0.2.0**, supporting **0.2.0-rc.1 and 0.2.0-rc.2**; the current development and regression baseline is **0.2.0-rc.2** (commit **639ed015397290b3745d163aafe02ffee4aa3f84**, tag `dsh-v0.2.0-rc.2`). Peer ranges, `engines.dsh`, and the runtime dependency range are now `^0.2.0-rc.1 || ^0.2.1-0`, preserving rc.1 support while admitting the 0.2.1 prerelease line and stable release. Cordis and Schemastery also admit the 4.0.5 and 3.18.5 prerelease lines, respectively; the development lock remains on rc.2. From rc.1 to rc.2, the compaction, Session, tools/commands, token-meter and settings-form packages this backend uses only change version numbers, and the Plugins-page configuration slot contract is unchanged; no engine or browser-half code changes are needed. It still follows the 0.1.7 message model — tool results are first-class `role: "tool"` messages with a top-level `toolCallId` instead of user-role wrapper blocks — and the `compact-checkpoint` checkpoint source marker; checkpoints written by older hosts (`kind: "plugin", plugin: "compact"`) are still recognized in durable logs. Checkpoint replacements remain `surfaceOp: { op: "replace", startSeq, endSeq }`; the former `start` / `end` replacement fields are not supported. This is a specific migration target, not a compatibility claim for all future releases.
+
+A leading `system/message` at surface node 0 stays outside the compacted span; selection begins at the next surface node, and explicit replacement ranges cannot include the system head. Instant's retention policy is unchanged: `retainTurns` is a preference, `retainTokens` (or the `retainRatio`-derived budget) is a ceiling, and an oversized latest turn keeps a fitting suffix. Tool-pair balancing may extend that suffix beyond the ceiling; the protected system head is separate. By contrast, the target basic backend uses a **minimum recent-tail budget**, not instant's whole-turn/ceiling policy. Do not assume configuration or behavior equivalence.
+
+The added 0.2.1 dependency range is not a full compatibility certification. Source review used **0.2.1-alpha.5** (commit `1517a4dbca0a2789ff1d41ba439600f8547d23fa`); isolated API/runtime tests and declaration checks passed, but client hot reload and two existing recall-provenance issues remain unresolved. Other 0.2.1 prereleases and live GUI/profile activation have not been verified. This metadata-only change does not fix those issues.
+
+Pinned evidence: [basic selector and system-head protection](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/compaction/compaction-basic/src/region.ts#L99-L155), [replacement operation](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/compaction/compaction-basic/src/region.ts#L505-L510).
+
+The 0.2.0 plugin manager enforces these ranges itself: installing on an incompatible host fails with an `incompatible-version` refusal naming the unsatisfied `@deepseek-ai/dsh-*` peers. The deliberate escape hatch is an exact-version exemption (`dsh plugin allow-version`), which the panel surfaces — do not edit this package's metadata to force an install.
 
 ## Example
 
@@ -48,23 +59,23 @@ The package also ships the counterparts that close the near-lossless loop — **
 | `/recall` **command** (human, grep) | `dsh-compaction-instant/command` | `/recall <keyword|regex>` appends a durable `form: "recall"` user message with the matching events and their seq pointers, so the next model turn sees them |
 | Shared cores | `dsh-compaction-instant/recall` + `dsh-compaction-instant/search` | Seq parsing (`12`, `3-7`, `seq 12` / `seqs 3-7`), log expansion, budgets, projection; regex compilation and hit rendering |
 
-Recall keeps **everything**: text, reasoning, raw tool-call arguments, nested tool-result content; log-only events render as labeled data dumps; missing seqs are reported; a `maxRecallTokens` budget (default **16000**) cuts with a provenance marker and counts the skipped remainder; searches cap shown hits (`maxSearchHits`, default **50**). Both plugins are separate rows, so they can be mounted next to **any** compaction backend — they only read the durable log.
+Recall projects durable text, reasoning, raw tool-call arguments, nested tool-result content and file-reference metadata (readable/searchable references, not attachment bytes); log-only events render as labeled data dumps; missing seqs are reported; a `maxRecallTokens` budget (default **16000**) cuts with a provenance marker and counts the skipped remainder; searches cap shown hits (`maxSearchHits`, default **50**). Both plugins are separate rows, so they can be mounted next to **any** compaction backend — they only read the durable log.
 
 Every checkpoint also frames a short **RECALL guide** at its head, telling the model exactly how to use `recall` / `search` to recover elided content. When a prior checkpoint is elided under cap pressure it never vanishes silently: it leaves a single `[checkpoint N]` line (N = compaction ordinal, 1 = oldest), which `recall(type:"checkpoint", id:"N")` restores in full.
 
 ## Configuration
 
-All fields optional; defaults shown.
+All fields optional; defaults shown. The retained-tail ceiling is subject to the tool-pair balancing exception described above; the protected system head is separate.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `thresholdRatio` | `0.5` | Fraction of the routed model's context window that triggers automatic compaction |
 | `retainTurns` | `1` | Preferred complete recent turns kept verbatim (automatic and manual `/compact`); never overrides the ceiling |
-| `retainRatio` | — | `compaction-basic` compatibility mode: derive the retained ceiling from the routed model context window; mutually exclusive with `retainTokens` and must be below `thresholdRatio` |
+| `retainRatio` | — | Legacy ratio mode (not current basic policy equivalence): derive the retained ceiling from the routed model context window; mutually exclusive with `retainTokens` and must be below `thresholdRatio` |
 | `retainTokens` | `5120` | **Hard** retained-region token ceiling: older whole turns are added only while the total fits, and when the latest turn alone exceeds it, only the fitting suffix of that turn is kept; mutually exclusive with `retainRatio` |
 | `auto` | `true` | Register `agent/pre-step` pressure and `agent/request-error` overflow recovery |
 | `checkpointCap` | `65536` | Total budget for one compiled checkpoint (compiler tokens): a checkpoint compiled from a smaller span stays near-lossless, a larger one elides down to this cap |
-| `maxTokens` / `checkpointScale` | `8192` / `0.1` | **Deprecated** — accepted for drop-in compatibility but **ignored**: the budget is the cap alone (no floor, no proportional scaling) |
+| `maxTokens` / `checkpointScale` | `8192` / `0.1` | **Deprecated** — accepted for legacy configuration compatibility but **ignored**: the budget is the cap alone (no floor, no proportional scaling) |
 | `textTokens` | `512` | Budget per assistant text block |
 | `userTextTokens` | `1024` | Budget per user text block |
 | `toolCallTokens` | `128` | Budget per tool-call one-liner (never rescaled — see the elision rules) |
@@ -77,7 +88,7 @@ All fields optional; defaults shown.
 | `hideTools` | — | Bookkeeping tools dropped from the checkpoint entirely |
 | `modelPolicies` | — | Per provider/model overrides of `thresholdRatio`/`retainTurns` and either `retainRatio` or `retainTokens` |
 | `compactionRetries` / `maxOverflowRetries` | `1` / `1` | Retry budgets, same semantics as basic |
-| `summarizationProvider` / `summarizationModel` | — | Accepted for config drop-in compatibility; **inert** — this backend never routes a model |
+| `summarizationProvider` / `summarizationModel` | — | Accepted for legacy configuration compatibility; **inert** — this backend never routes a model |
 
 The tool and command plugins each take their own `{ maxRecallTokens?: 16000, maxSearchHits?: 50 }` config.
 
@@ -85,20 +96,22 @@ The tool and command plugins each take their own `{ maxRecallTokens?: 16000, max
 
 Budgets are enforced twice — by token count and by a `budget × 4` character ceiling — so pathological unbroken runs (base64 blobs, minified files) cannot bypass them. Tool calls are **always one line**: they are never rescaled, and the cap loop shrinks only the conversation-text budgets (floor **32 tokens** each). If the compiled region still exceeds the cap, the oldest **tool rows** are removed first (`[N tool/result entries elided: seqs a-b]`), and only then the oldest remaining entries (`[N earlier entries elided: seqs a-b]`) — tool calls can never squeeze the dialogue out. The newest content always survives.
 
-### Browser settings card (Settings → Plugins)
+### Browser settings section (Plugins page)
 
-The first instant engine mounted by a DSH 0.1.2 preset owns the **host-global settings namespace** `compaction-instant`; its resolved exposed values form the shared base. Compatible later preset/session instances reuse that base instead of registering duplicates, and a live compatible follower is promoted automatically if the owner unloads. User overrides are persisted to `settings.yaml` and apply to every participating instant engine:
+DSH 0.1.7 replaced the old settings-card API with profile-patch-backed settings forms, so the bundle ships a tiny **settings bridge row** (`dsh-compaction-instant/settings`, composition id `compaction-instant`, installed by the bundle patch). Its all-volatile Config schema makes the host serve the `compaction-instant` settings form, and the Web **Plugins → dsh-compaction-instant → configuration** section edits it live. Writes persist into the profile's `cordis.patch.yml` and apply to every mounted instant engine without a reload; the bridge row itself mounts nothing and shares no state with the engines — they watch the served form.
 
 | Field | Meaning |
 |---|---|
-| `checkpointCap` | Total compiler-token budget for one checkpoint (default 65536) |
-| `auto` | Register automatic between-step compaction |
-| `thresholdRatio` | Context-window fraction that triggers automatic compaction (default `0.5`) |
-| `retainTurns` | Preferred complete recent turns kept verbatim (default `1`) |
-| `retainTokens` | **Hard** retained-token ceiling in the default fixed-ceiling mode (default `5120`) |
-| `retainRatio` | Ratio shown only when the owning composition selected ratio compatibility mode |
+| `checkpointCap` | Total compiler-token budget for one checkpoint (engine default 65536) |
+| `auto` | Register automatic between-step compaction (engine default on) |
+| `thresholdRatio` | Context-window fraction that triggers automatic compaction (engine default `0.5`) |
+| `retainTurns` | Preferred complete recent turns kept verbatim (engine default `1`) |
+| `retainTokens` | **Hard** retained-token ceiling for the fixed-ceiling mode (engine default `5120`) |
+| `retainRatio` | Ratio compatibility mode: derive the retained ceiling from the routed model context window |
 
-Everything else (`modelPolicies`, `toolArgTools`, `debug`, `debugLogPath`, the deprecated `maxTokens`/`checkpointScale`, …) stays Cordis-config-only. `retainRatio` and `retainTokens` are mutually exclusive retention modes; the first engine establishes the host-global mode, the settings card edits that mode, and later instant-engine instances follow it rather than creating a conflicting namespace. Every write is re-validated against every participating live engine before persistence. Non-exposed fields remain per-entry; exposed fields follow the shared first-owner base plus user layer. If that shared layer conflicts with a later preset's non-exposed policy (for example a model-specific `retainRatio` above the shared threshold), that engine logs a warning and continues **composition-only**; it neither follows nor blocks the global settings section. Without a settings service the engine uses only its composition entry. Restart `dsh web` after installation so the boot graph picks up the `dsh.client` bundle.
+The bundle also installs an inert **client-carrier row** (`compaction-instant-client`, naming the bare package with `carrier: true`): dsh-client-modules binds a bundle's browser half to the profile row whose specifier is exactly the package name, and this row is that anchor. The root module dispatches it to a no-op, so no profile-level engine races the preset-owned backend. Keep the row enabled — disabling it hides the configuration section while the engines keep working composition-only.
+
+Everything else (`modelPolicies`, `toolArgTools`, `debug`, `debugLogPath`, the deprecated `maxTokens`/`checkpointScale`, …) stays Cordis-config-only. Unset fields inherit each engine's own defaults, so a fresh bridge row starts **empty** rather than cloning defaults into the profile. `retainRatio` and `retainTokens` are mutually exclusive retention modes; a section carrying both resolves to ratio mode, and a served `retainTokens` clears an entry's ratio mode for as long as it is set. A section that conflicts with an engine's own composition (for example a `retainRatio` at or above that engine's `thresholdRatio`) makes only that engine log a warning and continue **composition-only** until the section becomes valid for it; every other engine keeps following. The settings plane validates each field at write time, but the cross-engine combination check of the 0.1.5 card is gone — a conflicting override now surfaces as that per-engine warning instead of a refused write. Without the bridge row (or without a settings service) every engine uses only its composition entry. Legacy `settings.yaml` overrides written by the 0.1.5 card are imported automatically by the host's 0.1.7 migration. After installation, ask the user to confirm a host reload/restart so the boot graph can pick up the `dsh.client` bundle; do not restart their host automatically.
 
 ### Tokenizer and multilingual behavior
 
@@ -113,13 +126,13 @@ The tokenizer is a character-class heuristic: ASCII letter runs and digit runs c
 
 Every truncation, excerpt, and cap cut is taken at a **code-point boundary** — a slice never leaves a lone surrogate half, so emoji and other astral characters always reach the model intact (pinned by `test/multilang.test.js`). The character-density ceiling follows the DeepSeek docs conversion (quick_start/token_usage): about 0.3 tokens per non-CJK character and 0.6 per CJK character.
 
-The Harness token meter is separate from the compiler estimator. Under DSH 0.1.2 it supplies route-priced `tokens` for pressure, retention, and the shrink guarantee, plus fixed `heuristicTokens` for the durable `compaction/summary.shadowedTokenCount` projection. The compiler heuristic and both Harness prices deliberately coexist.
+The Harness token meter is separate from the compiler estimator. Under DSH 0.1.7 it supplies route-priced `tokens` for pressure, retention, and the shrink guarantee, plus fixed `heuristicTokens` for the durable `compaction/summary.shadowedTokenCount` projection. The compiler heuristic and both Harness prices deliberately coexist.
 
 ## Guarantees
 
 - **Instant** — the compile is a single deterministic pass over the shadowed nodes; no network, no model, no KV-cache concerns.
 - **Near-lossless** — output contains only original tokens; every cut is marked and points at its durable `seq`; prior checkpoints are copied verbatim.
-- **Contract-exact drop-in** — identical seam, events, provenance, pricing (via the singleton `ctx.tokenMeter`), and failure vocabulary as `compaction-basic`, including the shrink guarantee (a checkpoint that would not reduce the surface is rejected).
+- **Targeted protocol support** — uses `ctx.compaction`, durable provenance, `ctx.tokenMeter` pricing, and the shrink check (a checkpoint that would not reduce the selected surface is rejected). This does not imply identical configuration, retention policy, or activation across presets.
 - **Optional pruner compatible** — consumes the optional `toolResultPruner` service exactly like basic (it helps the *retained tail*; the compiler collapses the *shadowed* region).
 
 ## Measured compression (real sessions, no drops)
@@ -150,64 +163,24 @@ Budget scan (same 2.5M-token tool-dense session): with the 64K default cap, the 
 | 131,072 | 131,047 | 5.2% | 1,142 | 1,058 |
 | 226,205 (no-drop threshold) | 226,205 | 9.0% | 2,199 | 0 |
 
-## Installation
+## Installation and upgrade
 
-All three methods below install the package (published to npm as `dsh-compaction-instant`) with the harness's own plugin manager (which runs pnpm inside the profile directory, making the package resolvable to both the host composition and every agent preset):
+### Recommended: direct install + profile preset override
 
-```bash
-dsh plugin --profile web add <spec>
-```
-
-`dsh-command-compact` (`/compact`) is backend-independent, so it keeps working unchanged in every method.
-
-### Method 1 — Drop-in replace the built-in engine (alias)
+Install into the profile used by your host with Harness's plugin manager. Use the published version only if it is available, or the freshly packed local tarball described below:
 
 ```bash
-dsh plugin --profile web add "@deepseek-ai/dsh-compaction-basic@npm:dsh-compaction-instant"
+dsh plugin --profile web add dsh-compaction-instant@0.2.0
 ```
 
-DSH 0.1.2 owns compaction on the preset plane, and its compaction-enabled built-in presets (`standard`, `ptc`, `cordis`) pin the package name `@deepseek-ai/dsh-compaction-basic`. To use this engine inside those presets you **masquerade as the built-in plugin**: preset rows resolve bare package names from the profile's `node_modules` (which outranks the Harness installation), so installing this package under the built-in name makes those three presets load it automatically. `minimal` has no compaction group and is intentionally unchanged.
+For DSH Desktop 0.2.0-rc.2, use `--profile desktop` instead of `--profile web`. Open Desktop once to initialize the profile, fully quit it before CLI package operations, then reopen it afterward; obtain user confirmation before interrupting active sessions.
 
-The masquerade is safe by construction: this engine is a contract-exact drop-in — the same `ctx.compaction` seam, the **identical inject list** (`llm`, `tokenMeter`, `sessions`), the same event protocol and error vocabulary, and its `Config` accepts every key of basic's configuration surface. Removing the alias dependency restores the real basic.
+The package's `dsh.bundle` installs **the recall/search tool, the /recall command, the settings bridge row, and the inert client-carrier row** — not the compaction engine. Seeing recall tools or the Plugins-page configuration section does **not** prove instant compaction is active. Do not assume `standard` uses this package just because it is installed.
 
-This install is **not** recognized as this package's bundle, so add only the recall tool and `/recall` command to the profile's `cordis.patch.yml` (new rows use an `insert` list; the file hot-reloads). Row names use the alias package name:
+In DSH 0.2.0 the shipped `standard` preset is one `@deepseek-ai/dsh-agent-preset` declaration row (`preset-standard` in the web-app include tree); a same-id row in the profile's `cordis.patch.yml` **replaces it wholesale**, so the override must restate the full `config` — every `plugins` row, not just the delta. Do not edit shipped preset files.
 
-```yaml
-- insert:
-    - id: tool-recall
-      name: '@deepseek-ai/dsh-compaction-basic/tool'
-    - id: command-recall
-      name: '@deepseek-ai/dsh-compaction-basic/command'
-```
-
-Do **not** add a host-level instant engine as a fallback: in DSH 0.1.2 an unscoped host listener would also receive events from `standard`/`ptc`/`cordis` and race their preset-owned engine. To add compaction to `minimal`, copy that preset and add the isolated compaction group there.
-
-### Method 2 — Direct install + AI-authored preset copy (dsh authoring mode)
-
-```bash
-dsh plugin --profile web add dsh-compaction-instant
-```
-
-Then open a session with the preset-authoring preset (the shipped `cordis` preset, "creation mode") and ask the AI to:
-
-> Copy the `standard` preset and swap its compaction engine row to `dsh-compaction-instant`.
-
-The AI uses `agentPresets.copy('standard', '<id>')` to create a locally authored preset, swaps the compaction row's `name` in the copy, mount-validates it with `standingKeyFor('<id>')`, and can set it as the default by patching the `agent-presets` row (`config.default: <id>`). The new preset appears in the UI picker; the built-in presets stay untouched.
-
-The direct install declares `dsh.bundle`, which registers only the globally inherited recall tool and command. The bundle deliberately does **not** mount a host compaction engine: DSH 0.1.2 selects the backend inside each preset. The copied preset is therefore the single engine activation point.
-
-### Method 3 — Direct install + manual preset configuration
-
-```bash
-dsh plugin --profile web add dsh-compaction-instant
-mkdir -p "$DSH_HOME/.agent-presets/<id>"
-# copy composition + metadata from the built-in preset you want as a base
-# (the preset roster lists every preset's real path):
-cp <built-in-preset>/agent.cordis.yml "$DSH_HOME/.agent-presets/<id>/agent.cordis.yml"
-# write preset.yml beside it with name + description
-```
-
-Then hand-edit the copy's compaction group — one row name change, inside the same isolate realm:
+1. Copy the `preset-standard` row from the shipped `packages/bundle/web-app/presets/standard.patch.yml` into the profile's `cordis.patch.yml` under a single `- insert:` item, keeping `id: preset-standard`, the name, and the entire `config` (`id`, `order`, all `plugins`).
+2. Inside the copied `config.plugins`, find the `compaction` group and change only its engine row from `compaction-basic` to this package. Review the old backend's config against this README rather than blindly copying it; the target basic retention policy differs. The **group fragment** (everything else stays as shipped):
 
 ```yaml
 - id: compaction
@@ -215,36 +188,55 @@ Then hand-edit the copy's compaction group — one row name change, inside the s
   group: true
   isolate:
     compaction: true
-    toolResultPruner: true      # the pruner must share this realm
+    toolResultPruner: true
   config:
     - id: compaction-instant
-      name: dsh-compaction-instant   # was '@deepseek-ai/dsh-compaction-basic'
+      name: dsh-compaction-instant
     - id: command-compact
       name: '@deepseek-ai/dsh-command-compact'
-    # ... keep the pruner row
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
 ```
 
-Rules: never edit the shipped preset install; keep the isolate realm; a successful `standingKeyFor` mount (or simply starting a session on the preset) is the real validation — the roster's `broken` flag only catches parse errors.
+3. Select the `standard` preset for a new validation session. Verify its resolved plugin module/version and that the engine mounts, then exercise `/compact` and recall. A preset being listed, or recall being available, is not an engine activation check. Do not assume an existing session has switched to a newly edited composition.
 
-No manual host rows are needed for Methods 2 and 3: the bundle registers the recall companions, while the copied preset owns the only compaction engine.
+A fully custom preset (a second `@deepseek-ai/dsh-agent-preset` row with its own `config.id`) works the same way and leaves the shipped `standard` untouched; select it explicitly. Only one `ctx.compaction` implementation may be mounted per preset context. Do not add a host-level engine as a fallback: an unscoped listener can receive agent events and race the preset-owned backend. `/compact` is backend-independent, but it still requires an active backend in the selected preset.
 
-| Method | Engine in built-in presets | Touches preset files | Extra preset in picker | Setup effort |
-|---|---|---|---|---|
-| **1. Alias replace** | ✅ automatic (`standard`/`ptc`/`cordis`) | no | no | one command + recall patch rows |
-| **2. AI-authored copy** | only the new preset | the copy | yes | one prompt |
-| **3. Manual preset** | only the new preset | the copy | yes | manual edit |
+### Upgrading a tarball deployment
 
-> Only one `ctx.compaction` implementation may be mounted per preset context. Version 0.1.5 intentionally removed the bundle's old host-engine row so a host listener cannot race the preset-selected engine.
+**Editing this source checkout does not update a previously installed tarball.** A package version edit or passing local tests also does not update the running host. After review and user confirmation of deployment:
+
+```bash
+# In this plugin checkout: create a new package artifact.
+npm pack
+# Install that NEW artifact into the actual host profile (use its absolute path).
+dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.2.0.tgz
+```
+
+Before running these deployment steps, confirm the target profile, installed package name (direct or alias), current resolved path/version, and intended preset with the user. If an old alias deployment exists, explicitly plan its replacement/removal instead of leaving two possible engine resolutions. Inspect the newly installed artifact and the custom preset's resolution afterward. **Ask the user to confirm host reload/restart** before doing it; it may interrupt active sessions. Reload the host so package code/boot metadata are loaded, then refresh the Web page and verify the existing host URL and a new session. A profile patch hot reload or page refresh alone is not proof that new package code replaced an already loaded module. These are operator instructions, not a claim that this release has been deployed.
+
+### Alias installation: advanced, conditional
+
+Installing under `@deepseek-ai/dsh-compaction-basic` was the older replacement route. It only works when the actual preset and resolver select that alias; it is **not inherently safe**, nor a guarantee that `standard` or all configurations will use instant correctly. Basic's current policy is different. Prefer the explicit preset override above. If you intentionally retain an alias, verify the resolved module, review configuration and companion subpath names, and validate the selected preset after a user-approved reinstall and host reload. Do not combine alias and direct engine rows in the same preset.
 
 ## Development
 
 ```bash
-npm ci          # exact DSH 0.1.2-rc.1 development graph
+npm ci          # exact DSH 0.2.0-rc.2 development graph
 npm test        # compiler/config/session/settings/engine integration
 npm run check   # syntax + strict public-declaration typecheck
+npm run check:package # pack + isolated installed-artifact tests/exports/browser registration
 ```
 
-The package has two direct runtime dependencies: `@deepseek-ai/schemastery` for Config schemas and `@deepseek-ai/dsh-util-values` for the shared immutable-value helpers. Harness component packages remain peers; exact 0.1.2-rc.1 copies are development dependencies and locked for reproducible tests. `src/compiler.js` remains dependency-free.
+The package has two direct runtime dependencies: `@deepseek-ai/schemastery` for Config schemas (including the settings bridge's volatile fields) and `@deepseek-ai/dsh-util-values` for the shared immutable-value helpers. Harness component packages remain peers; exact 0.2.0-rc.2 copies are development dependencies and locked for reproducible tests. `src/compiler.js` remains dependency-free.
+
+Verification scope for 0.2.0 includes replacement fields and rejection of the old shape, system-head protection, explicit ranges, retention/tool pairing, durable replay/provenance, recall/search file references, tool-role message projection and both generations of checkpoint markers, the settings bridge schema plus settings-plane follow/fallback behavior, root-module dispatch (carrier inertness, carrier-key stripping, engine fiber-state propagation), and installed-artifact exports/browser registration. Verified on Windows: against the clean-installed 0.2.0-rc.2 development graph, Node 24.15.0 passed all 128 checkout tests and the syntax/type checks passed; the packed tarball installed in isolation resolved the 0.2.0-rc.2 peer graph and passed all 121 installed-artifact runtime tests. A running-host restart, live GUI verification, deployment, and real model requests were not performed for this retarget. The measured compression tables above are historical, not a rerun for this release.
+
+For this Windows sandbox run, tests used no child-process isolation (`node --test --experimental-test-isolation=none`; the package check received the same flag through `NODE_OPTIONS=--experimental-test-isolation=none`).
 
 ## Differences from compaction-basic
 
