@@ -1,5 +1,33 @@
-node_modules
+# Dependencies and local package-manager caches
+node_modules/
+.npm/
+.npm-cache/
+
+# Build, verification and coverage output
 .build/
+dist/
+coverage/
+*.tsbuildinfo
+
+# npm pack artifacts
+*.tgz
+
+# Logs
 *.log
-compaction-debug.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local environment and credentials (keep shareable templates)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# OS and editor temporary files
 .DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
