@@ -12,7 +12,7 @@ const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta
 const readInstalledManifest = (name) => JSON.parse(readFileSync(require.resolve(name + "/package.json"), "utf8"));
 
 test("release metadata targets the exact DSH 0.2.0 development graph", () => {
-  assert.equal(pkg.version, "0.2.0");
+  assert.equal(pkg.version, "0.2.1");
   assert.equal(lock.name, pkg.name);
   assert.equal(lock.version, pkg.version);
   for (const field of ["name", "version", "dependencies", "devDependencies", "peerDependencies", "peerDependenciesMeta", "engines"]) {
@@ -35,6 +35,24 @@ test("release metadata targets the exact DSH 0.2.0 development graph", () => {
   }
   assert.equal(readInstalledManifest("@deepseek-ai/cordis").version, "4.0.4");
   assert.equal(readInstalledManifest("@deepseek-ai/schemastery").version, "3.18.4");
+});
+
+test("plugin icons are local, licensed and shared by the companion entries", () => {
+  assert.equal(pkg.icon, "./assets/icon.svg");
+  assert.ok(pkg.files.includes("assets"));
+  const iconPath = new URL(pkg.icon, new URL("../package.json", import.meta.url));
+  const icon = readFileSync(iconPath, "utf8");
+  assert.ok(Buffer.byteLength(icon) <= 256 * 1024);
+  assert.match(icon, /<svg[^>]+viewBox="0 0 64 64"/u);
+  assert.doesNotMatch(icon, /<script|<foreignObject|(?:href|src)=/iu);
+  for (const entry of ["tool", "command", "settings"]) {
+    assert.equal(pkg.exports["./" + entry + "/icon"], pkg.icon);
+    assert.equal(readFileSync(require.resolve(pkg.name + "/" + entry + "/icon"), "utf8"), icon);
+  }
+  const license = readFileSync(new URL("../assets/LICENSE.lucide", import.meta.url), "utf8");
+  assert.match(license, /ISC License/u);
+  assert.match(license, /Lucide Contributors/u);
+  assert.match(license, /Permission to use, copy, modify/u);
 });
 
 test("0.2.0 Session rejects obsolete assistant settlements and replacement fields", () => {

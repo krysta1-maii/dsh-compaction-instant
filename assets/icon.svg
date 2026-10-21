@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Adapted from Lucide shrink (0.468.0); see LICENSE.lucide. -->
+  <rect width="64" height="64" rx="14" fill="#4f46e5" />
+  <g transform="translate(8 8) scale(2)" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m15 15 6 6m-6-6v4.8m0-4.8h4.8" />
+    <path d="M9 19.8V15m0 0H4.2M9 15l-6 6" />
+    <path d="M15 4.2V9m0 0h4.8M15 9l6-6" />
+    <path d="M9 4.2V9m0 0H4.2M9 9 3 3" />
+  </g>
+</svg>

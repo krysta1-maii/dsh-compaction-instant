@@ -31,6 +31,10 @@ assert.equal(packed.length, 1);
 assert.equal(packed[0].name, manifest.name);
 assert.equal(packed[0].version, manifest.version);
 const tarball = join(build, packed[0].filename);
+const iconPath = manifest.icon.replace(/^\.\//u, "");
+for (const asset of [iconPath, "assets/LICENSE.lucide", "assets/README.md"]) {
+  assert.ok(packed[0].files.some(file => file.path === asset), "missing packed asset: " + asset);
+}
 // Pin the entire tested runtime graph, including optional host capabilities.
 // Platform-bound optional variants (node-addon-require-builtin-*) stay out of
 // the manifest: as direct entries they would hard-fail on other platforms,
@@ -51,7 +55,7 @@ const smoke = `
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
-import { join, sep } from "node:path";
+import { dirname, join, sep } from "node:path";
 import vm from "node:vm";
 const require = createRequire(import.meta.url);
 const installedPrefix = join(process.cwd(), "node_modules") + sep;
@@ -60,7 +64,7 @@ assert.ok(pkgPath.startsWith(installedPrefix), pkgPath);
 const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
 assert.equal(pkg.version, ${JSON.stringify(manifest.version)});
 for (const entry of Object.keys(pkg.exports)) {
-  if (entry === "./client" || entry === "./package.json") continue;
+  if (entry === "./client" || entry === "./package.json" || entry.endsWith("/icon")) continue;
   await import("dsh-compaction-instant" + (entry === "." ? "" : entry.slice(1)));
 }
 for (const [name, expectedVersion] of Object.entries(pkg.devDependencies).filter(([name]) => name.startsWith("@deepseek-ai/dsh-"))) {
@@ -74,7 +78,13 @@ vm.runInNewContext(readFileSync(require.resolve("dsh-compaction-instant/client")
 });
 assert.ok(definitions.some(definition => definition.id === "dsh-compaction-instant"));
 assert.ok(readFileSync(new URL(pkg.dsh.bundle.patch, "file:" + pkgPath), "utf8").includes("dsh-compaction-instant/tool"));
-console.log("Tarball exports, client registration, bundle and manifest-pinned DSH resolution passed");
+const icon = readFileSync(join(dirname(pkgPath), pkg.icon), "utf8");
+assert.equal(icon, ${JSON.stringify(readFileSync(join(root, manifest.icon), "utf8"))});
+for (const entry of ["tool", "command", "settings"]) {
+  assert.equal(readFileSync(require.resolve(pkg.name + "/" + entry + "/icon"), "utf8"), icon);
+}
+assert.equal(readFileSync(join(dirname(pkgPath), "assets/LICENSE.lucide"), "utf8"), ${JSON.stringify(readFileSync(join(root, "assets/LICENSE.lucide"), "utf8"))});
+console.log("Tarball exports, icons, license, client registration, bundle and manifest-pinned DSH resolution passed");
 `;
 writeFileSync(join(cwd, "smoke.mjs"), smoke);
 execFileSync(process.execPath, ["smoke.mjs"], { cwd, stdio: "inherit" });

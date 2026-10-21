@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-10-21
+
+### Plugin icon
+
+- Adds a locally bundled adaptation of the Lucide Shrink icon: white inward arrows on an indigo rounded square, with its upstream ISC license and source attribution.
+- Declares the top-level package `icon` and exports the same artwork for the tool, command, and settings subpaths. Includes all assets in the npm package and verifies them in the isolated tarball smoke check.
+- Verifies root icon loading through the real `readPluginMeta` readers from DSH **0.2.0-rc.2** and **0.2.1-rc.2**, plus all three companion icons on **0.2.1-rc.2**. The locked development graph and runtime dependency ranges are unchanged; older companion rows retain their default artwork.
+- Verification on Linux / Node **24.19.0**: all **152** checkout tests, syntax and strict declaration checks, and all **144** isolated tarball runtime tests passed, including icon resource and license packaging checks. Chrome rendered the SVG successfully at 24, 40, and 64 pixels on light and dark backgrounds. No profile deployment, running-host reload, or live Plugins-page verification was performed.
 
 ### DSH 0.2.1 dependency ranges
 
