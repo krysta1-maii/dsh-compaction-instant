@@ -63,6 +63,9 @@ let sessionSerial = 0;
  */
 async function setupPtc(options = {}) {
   const ctx = new Context();
+  ctx.provide("workingDirectory", {
+    ensure: async () => process.cwd()
+  });
   await ctx.plugin(SystemPrompt, options.toolOrder ? { toolOrder: options.toolOrder } : {});
   await ctx.plugin(ToolRuntime, {
     mode: options.mode ?? "ptc",
@@ -101,7 +104,7 @@ function runCode(ctx, session, code, extras = {}) {
       description: extras.description ?? "Run the test program",
       ...(extras.timeoutMs !== undefined ? { timeoutMs: extras.timeoutMs } : {})
     },
-    agent: extras.agent ?? { id: session.id, session }
+    agent: extras.agent ?? { id: session.id, session, ctx }
   });
 }
 

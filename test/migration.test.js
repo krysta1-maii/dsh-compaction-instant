@@ -11,7 +11,7 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
 const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
 const readInstalledManifest = (name) => JSON.parse(readFileSync(require.resolve(name + "/package.json"), "utf8"));
 
-test("release metadata targets the exact DSH 0.2.0 development graph", () => {
+test("release metadata targets the exact DSH 0.2.1 development graph", () => {
   assert.equal(pkg.version, "0.2.1");
   assert.equal(lock.name, pkg.name);
   assert.equal(lock.version, pkg.version);
@@ -30,11 +30,11 @@ test("release metadata targets the exact DSH 0.2.0 development graph", () => {
   assert.equal(pkg.peerDependenciesMeta["@deepseek-ai/dsh-settings"].optional, true);
 
   for (const name of Object.keys(pkg.devDependencies).filter((entry) => entry.startsWith("@deepseek-ai/dsh-"))) {
-    assert.equal(pkg.devDependencies[name], "0.2.0-rc.2", name);
-    assert.equal(readInstalledManifest(name).version, "0.2.0-rc.2", name);
+    assert.equal(pkg.devDependencies[name], "0.2.1-rc.3", name);
+    assert.equal(readInstalledManifest(name).version, "0.2.1-rc.3", name);
   }
-  assert.equal(readInstalledManifest("@deepseek-ai/cordis").version, "4.0.4");
-  assert.equal(readInstalledManifest("@deepseek-ai/schemastery").version, "3.18.4");
+  assert.equal(readInstalledManifest("@deepseek-ai/cordis").version, "4.0.5");
+  assert.equal(readInstalledManifest("@deepseek-ai/schemastery").version, "3.18.5");
 });
 
 test("plugin icons are local, licensed and shared by the companion entries", () => {
