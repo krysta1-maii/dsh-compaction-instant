@@ -12,7 +12,7 @@ const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta
 const readInstalledManifest = (name) => JSON.parse(readFileSync(require.resolve(name + "/package.json"), "utf8"));
 
 test("release metadata targets the exact DSH 0.2.1 development graph", () => {
-  assert.equal(pkg.version, "0.2.1");
+  assert.equal(pkg.version, "0.3.0");
   assert.equal(lock.name, pkg.name);
   assert.equal(lock.version, pkg.version);
   for (const field of ["name", "version", "dependencies", "devDependencies", "peerDependencies", "peerDependenciesMeta", "engines"]) {

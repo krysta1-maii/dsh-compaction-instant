@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.0 — 2026-10-26
+
+### PTC compatibility and recovery
+
+- Moves the default development graph to DSH **0.2.1-rc.3**, Cordis **4.0.5**, and Schemastery **3.18.5**. Peer ranges and `engines.dsh` remain `^0.2.0-rc.1 || ^0.2.1-0`; no runtime dependency is added.
+- Rejects non-finite, non-safe, reversed, and over-budget recall seq selections before expansion. `MAX_RECALL_ENTRIES` (1000) bounds the declared width of a whole selection, including duplicate ranges and missing seqs; compiler elision markers are split into independently recallable chunks at the same limit.
+- Threads optional `AbortSignal`s through recall, search, provenance traversal, and the model-facing tools, checking at every event, selection, and source-chain step without claiming interruption inside a single catastrophic regex.
+- Checkpoints retain the outer `run_code` `description` and add one row per nested PTC dispatch with stable start/settle pointers. A start-only row is preserved only when the outer result is the host's `TOOL_OUTCOME_UNKNOWN` recovery outcome; normal completions, duplicate events, orphan settles, `TOOL_NOT_STARTED` with nested history, and identity mismatches abort the compaction instead of committing a partial checkpoint.
+- `recall(type:"result")` accepts settled `tool/ptc-dispatch` events directly while keeping the official pruner provenance checks for `tool/result` unchanged. Dispatch events remain log-only and are never added to `shadowedSeqs`.
+- The compiler reports inspected dispatch start/settle seqs through optional `referencedSeqs`; the transaction appends them to `checkpoint.sourceEventSeqs`. Custom compile hooks may omit the field, and invalid duplicates/future/unsafe refs fail at `Session.append` and close the compaction in an error bracket.
+- The `recall` canonical value now includes `entries` and `seqs`; `search` includes structured `hits` (`seq`/`kind`/`text`). A real `ToolRuntime(mode:"ptc")` program can complete search → recall without parsing display text; `output.render` is unchanged.
+- Documentation now limits recall/search promises to recorded durable content, describes spill replacement (post-spill preview plus an opaque locator, not the pre-spill canonical value), explains dispatch-log visibility timing inside one `run_code`, and documents replacing the engine inside `preset-ptc` rather than only `preset-standard`.
+- Fixes the isolated package check to pin only top-level lock entries, so nested historical dependency layouts (rc.1/rc.2) can be installed and checked.
+
+### Verification
+
+- Linux / Node **24.22.1**: the rc.3 development graph passed all **177** checkout tests, syntax and strict declaration checks, and the isolated tarball package check (**169** artifact tests).
+- Isolated compatibility graphs for **0.2.0-rc.1**, **0.2.0-rc.2**, and **0.2.1-alpha.5** each passed **170** checkout tests, syntax/type checks, and their tarball package checks. The rc.1/rc.2 graphs used Cordis 4.0.5 to keep the pinned Cordis plugin peers consistent.
+- No real `preset-ptc` composition with a packaged artifact, live GUI, host restart, deployment, or real model request was performed. Those remain unverified.
+
 ## 0.2.1 — 2026-10-21
 
 ### Plugin icon

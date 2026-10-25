@@ -41,6 +41,7 @@ for (const asset of [iconPath, "assets/LICENSE.lucide", "assets/README.md"]) {
 // while as optional dependencies of the pinned packages npm picks the local one.
 const dependencies = Object.fromEntries(Object.entries(lock.packages)
   .filter(([path, entry]) => path.startsWith("node_modules/")
+    && !path.slice("node_modules/".length).includes("/node_modules/")
     && !/^node_modules\/(?:@types\/|typescript$|undici-types$)/u.test(path)
     && !(entry.optional === true && (entry.os !== undefined || entry.cpu !== undefined)))
   .map(([path, entry]) => [path.slice("node_modules/".length), entry.version]));

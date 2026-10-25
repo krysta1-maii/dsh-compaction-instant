@@ -18,11 +18,14 @@ import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
 import ToolRuntime, { RUN_CODE_NAME, defineTool } from "@deepseek-ai/dsh-tools";
 import { MAX_RECALL_ENTRIES, compileNodes, compileRegion } from "../src/compiler.js";
 import { InstantCompactionEngine } from "../src/index.js";
-import { buildPtcDispatchIndex } from "../src/ptc.js";
 import { expandSelections, parseSeqSpec, resolveRecallReference } from "../src/recall.js";
 import { compactSurfaceRegion } from "../src/region.js";
 import { searchSession } from "../src/search.js";
 import * as recallTools from "../src/tool.js";
+
+// Internal module with no package subpath: load the file shipped in the same
+// package so the isolated tarball check exercises the installed copy too.
+const { buildPtcDispatchIndex } = await import(new URL("./src/ptc.js", import.meta.resolve("dsh-compaction-instant/package.json")));
 
 /** Programmable in-process runtime. Tests set `behavior` to drive `request.bindings`. */
 class FakeRuntime extends PtcRuntime {

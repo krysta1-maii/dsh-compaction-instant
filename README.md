@@ -17,16 +17,17 @@ A compaction compresses a shadowed history span in **milliseconds, with zero mod
 
 | dsh-compaction-instant | DeepSeek Harness | Node.js |
 |---|---|---|
+| `0.3.0` | `0.2.0-rc.1`, `0.2.0-rc.2`, `0.2.1-alpha.5`, `0.2.1-rc.3` | `>=22.12.0` |
 | `0.2.0`, `0.2.1` | `0.2.0-rc.1`, `0.2.0-rc.2` | `>=22.12.0` |
 | `0.1.8` | `0.1.7` | `>=22.12.0` |
 | `0.1.7` | `0.1.7` | `>=22.12.0` |
 | `0.1.6` | `0.1.5-rc.1` | `>=22.12.0` |
 
-Versions 0.2.0 and 0.2.1 target DSH **0.2.0**, supporting **0.2.0-rc.1 and 0.2.0-rc.2**; the current development and regression baseline is **0.2.0-rc.2** (commit **639ed015397290b3745d163aafe02ffee4aa3f84**, tag `dsh-v0.2.0-rc.2`). Peer ranges, `engines.dsh`, and the runtime dependency range are now `^0.2.0-rc.1 || ^0.2.1-0`, preserving rc.1 support while admitting the 0.2.1 prerelease line and stable release. Cordis and Schemastery also admit the 4.0.5 and 3.18.5 prerelease lines, respectively; the development lock remains on rc.2. From rc.1 to rc.2, the compaction, Session, tools/commands, token-meter and settings-form packages this backend uses only change version numbers, and the Plugins-page configuration slot contract is unchanged; no engine or browser-half code changes are needed. It still follows the 0.1.7 message model — tool results are first-class `role: "tool"` messages with a top-level `toolCallId` instead of user-role wrapper blocks — and the `compact-checkpoint` checkpoint source marker; checkpoints written by older hosts (`kind: "plugin", plugin: "compact"`) are still recognized in durable logs. Checkpoint replacements remain `surfaceOp: { op: "replace", startSeq, endSeq }`; the former `start` / `end` replacement fields are not supported. This is a specific migration target, not a compatibility claim for all future releases.
+Version 0.3.0 is developed against **DSH 0.2.1-rc.3** (commit **1f81c047fc48fa190a683e469daa699857e9afe8**) and keeps the peer/runtime range `^0.2.0-rc.1 || ^0.2.1-0`. The development lock pins the 0.2.1-rc.3 graph, Cordis 4.0.5, and Schemastery 3.18.5. Compatibility regression ran on four isolated graphs: **0.2.0-rc.1** (`4878cdabd87d4041bdaff61d04c966883b9fd07a`), **0.2.0-rc.2** (`639ed015397290b3745d163aafe02ffee4aa3f84`), **0.2.1-alpha.5** (`1517a4dbca0a2789ff1d41ba439600f8547d23fa`), and **0.2.1-rc.3**. Each graph passed 170 tests (177 on rc.3), syntax and strict declaration checks, and the isolated tarball package check; the rc.1/rc.2 graphs used cordis 4.0.5 so the pinned Cordis plugin peers stayed consistent. Other 0.2.1 prereleases and stable 0.2.1 were not separately verified. It still follows the 0.1.7 message model — tool results are first-class `role: "tool"` messages with a top-level `toolCallId` instead of user-role wrapper blocks — and the `compact-checkpoint` checkpoint source marker; checkpoints written by older hosts (`kind: "plugin", plugin: "compact"`) are still recognized in durable logs. Checkpoint replacements remain `surfaceOp: { op: "replace", startSeq, endSeq }`; the former `start` / `end` replacement fields are not supported. This is a specific migration target, not a compatibility claim for all future releases.
 
 A leading `system/message` at surface node 0 stays outside the compacted span; selection begins at the next surface node, and explicit replacement ranges cannot include the system head. Instant's retention policy is unchanged: `retainTurns` is a preference, `retainTokens` (or the `retainRatio`-derived budget) is a ceiling, and an oversized latest turn keeps a fitting suffix. Tool-pair balancing may extend that suffix beyond the ceiling; the protected system head is separate. By contrast, the target basic backend uses a **minimum recent-tail budget**, not instant's whole-turn/ceiling policy. Do not assume configuration or behavior equivalence.
 
-The added 0.2.1 dependency range is not a full compatibility certification. Source review used **0.2.1-alpha.5** (commit `1517a4dbca0a2789ff1d41ba439600f8547d23fa`). Regression coverage now includes owner-scoped client reload, drafts edited during a pending save, nonmonotonic surface recovery selections, and official-pruner provenance through compaction and replay. Other 0.2.1 prereleases and live GUI/profile activation have not been verified.
+Regression coverage now includes PTC dispatch indexing and recovery, unsafe-seq rejection, marker chunking, structured search/recall values, real ToolRuntime PTC programs, spill-preview preservation, and dispatch log timing, in addition to owner-scoped client reload, drafts edited during a pending save, nonmonotonic surface recovery selections, and official-pruner provenance through compaction and replay. A live `preset-ptc` composition with a packaged artifact, real GUI, host restart, and real model requests were not performed; those remain unverified.
 
 Typed `recall(type: "result")` follows validated official-pruner records back to the original tool result; `recall(type: "seq")` still reads the addressed event itself, including its pruned representation. Elision markers list exact seqs rather than treating surface order as a numeric interval. Complete recovery markers and minimum text/framing overhead can exceed an unusually small checkpoint cap; the reported token count includes that overhead.
 
@@ -179,10 +180,10 @@ Budget scan (same 2.5M-token tool-dense session): with the 64K default cap, the 
 Install into the profile used by your host with Harness's plugin manager. Use the published version only if it is available, or the freshly packed local tarball described below:
 
 ```bash
-dsh plugin --profile web add dsh-compaction-instant@0.2.1
+dsh plugin --profile web add dsh-compaction-instant@0.3.0
 ```
 
-For DSH Desktop 0.2.0-rc.2, use `--profile desktop` instead of `--profile web`. Open Desktop once to initialize the profile, fully quit it before CLI package operations, then reopen it afterward; obtain user confirmation before interrupting active sessions.
+For DSH Desktop builds on this line, use `--profile desktop` instead of `--profile web`. Open Desktop once to initialize the profile, fully quit it before CLI package operations, then reopen it afterward; obtain user confirmation before interrupting active sessions.
 
 The package's `dsh.bundle` installs **the recall/search tool, the /recall command, the settings bridge row, and the inert client-carrier row** — not the compaction engine. Seeing recall tools or the Plugins-page configuration section does **not** prove instant compaction is active. Do not assume `standard` uses this package just because it is installed.
 
@@ -225,7 +226,7 @@ A fully custom preset (a second `@deepseek-ai/dsh-agent-preset` row with its own
 # In this plugin checkout: create a new package artifact.
 npm pack
 # Install that NEW artifact into the actual host profile (use its absolute path).
-dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.2.1.tgz
+dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.3.0.tgz
 ```
 
 Before running these deployment steps, confirm the target profile, installed package name (direct or alias), current resolved path/version, and intended preset with the user. If an old alias deployment exists, explicitly plan its replacement/removal instead of leaving two possible engine resolutions. Inspect the newly installed artifact and the custom preset's resolution afterward. **Ask the user to confirm host reload/restart** before doing it; it may interrupt active sessions. Reload the host so package code/boot metadata are loaded, then refresh the Web page and verify the existing host URL and a new session. A profile patch hot reload or page refresh alone is not proof that new package code replaced an already loaded module. These are operator instructions, not a claim that this release has been deployed.
@@ -239,15 +240,15 @@ Installing under `@deepseek-ai/dsh-compaction-basic` was the older replacement r
 ## Development
 
 ```bash
-npm ci          # exact DSH 0.2.0-rc.2 development graph
+npm ci          # exact DSH 0.2.1-rc.3 development graph
 npm test        # compiler/config/session/settings/engine integration
 npm run check   # syntax + strict public-declaration typecheck
 npm run check:package # pack + isolated installed-artifact tests/exports/browser registration
 ```
 
-The package has two direct runtime dependencies: `@deepseek-ai/schemastery` for Config schemas (including the settings bridge's volatile fields) and `@deepseek-ai/dsh-util-values` for the shared immutable-value helpers. Harness component packages remain peers; exact 0.2.0-rc.2 copies are development dependencies and locked for reproducible tests. `src/compiler.js` remains dependency-free.
+The package has two direct runtime dependencies: `@deepseek-ai/schemastery` for Config schemas (including the settings bridge's volatile fields) and `@deepseek-ai/dsh-util-values` for the shared immutable-value helpers. Harness component packages remain peers; exact 0.2.1-rc.3 copies are development dependencies and locked for reproducible tests. `src/compiler.js` remains dependency-free.
 
-Verification scope for 0.2.0 includes replacement fields and rejection of the old shape, system-head protection, explicit ranges, retention/tool pairing, durable replay/provenance, recall/search file references, tool-role message projection and both generations of checkpoint markers, the settings bridge schema plus settings-plane follow/fallback behavior, root-module dispatch (carrier inertness, carrier-key stripping, engine fiber-state propagation), and installed-artifact exports/browser registration. Verified on Windows: against the clean-installed 0.2.0-rc.2 development graph, Node 24.15.0 passed all 128 checkout tests and the syntax/type checks passed; the packed tarball installed in isolation resolved the 0.2.0-rc.2 peer graph and passed all 121 installed-artifact runtime tests. A running-host restart, live GUI verification, deployment, and real model requests were not performed for this retarget. The measured compression tables above are historical, not a rerun for this release.
+Verification scope for 0.3.0 includes replacement fields and rejection of the old shape, system-head protection, explicit ranges, retention/tool pairing, durable replay/provenance, recall/search file references, tool-role message projection, both generations of checkpoint markers, unsafe-seq rejection, recall entry bounds and cancellation, PTC dispatch compilation and result recall, structured search/recall values, spill-preview and dispatch-timing behavior, the settings bridge schema plus settings-plane follow/fallback behavior, root-module dispatch (carrier inertness, carrier-key stripping, engine fiber-state propagation), and installed-artifact exports/browser registration. On Linux with Node 24.22.1, the rc.3 development graph passed all 177 checkout tests, syntax/type checks, and the isolated tarball package check (169 artifact tests); isolated rc.1, rc.2, and alpha.5 graphs each passed 170 checkout tests, their checks, and their tarball checks. A running-host restart, live GUI verification, deployment, a live `preset-ptc` composition, and real model requests were not performed. The measured compression tables above are historical, not a rerun for this release.
 
 For this Windows sandbox run, tests used no child-process isolation (`node --test --experimental-test-isolation=none`; the package check received the same flag through `NODE_OPTIONS=--experimental-test-isolation=none`).
 
@@ -261,4 +262,4 @@ For this Windows sandbox run, tests used no child-process isolation (`node --tes
 - The `compaction/summary` event carries the **compiled entries themselves** — the UI's expandable checkpoint row shows exactly the body the model sees, wrapped in an **adaptive Markdown code fence** (the fence grows longer than any ``` inside, so messages containing markdown render as one tidy code block), and the checkpoint heads with a short RECALL guide telling the model how to recover elided content via `recall` / `search`.
 - Trade-off: the checkpoint can be less *dense* than an LLM summary for prose-heavy history (facts are truncated, not merged). The verbatim tail (`retainTurns`/`retainTokens`) is where active work lives, and everything else stays recoverable through `(seq N)` pointers + recall.
 
-MIT licensed. The [plugin icon](<assets/icon.svg>) adapts [Lucide Shrink](https://lucide.dev/icons/shrink), distributed under the [ISC license](<assets/LICENSE.lucide>); see [source and modifications](<assets/README.md>). Version 0.2.1 declares a local package icon verified with the DSH 0.2.0-rc.2 and 0.2.1-rc.2 metadata readers; the companion-entry icons use the newer subpath resource contract verified on 0.2.1-rc.2. Older companion rows keep their default artwork.
+MIT licensed. The [plugin icon](<assets/icon.svg>) adapts [Lucide Shrink](https://lucide.dev/icons/shrink), distributed under the [ISC license](<assets/LICENSE.lucide>); see [source and modifications](<assets/README.md>). Version 0.2.1 introduced the local package icon, verified with the DSH 0.2.0-rc.2 and 0.2.1-rc.2 metadata readers; 0.3.0 retains the icon and exports. The companion-entry icons use the newer subpath resource contract verified on 0.2.1-rc.2. Older companion rows keep their default artwork.
