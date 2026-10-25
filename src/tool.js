@@ -3,7 +3,7 @@
  *
  * Two complementary entry points over the durable session log:
  *
- *   - `recall` — restore the exact original content of earlier events by a
+ *   - `recall` — restore the recorded durable content of earlier events by a
  *     typed reference: `type: "seq"` for `(seq N)` / `(seqs A-B)` markers,
  *     `type: "result"` for the `result N` pointer on a tool-call one-liner,
  *     `type: "checkpoint"` for a `[checkpoint N]` elision line.
@@ -11,8 +11,10 @@
  *     events with their `(seq N)` pointers, so the agent can then call
  *     `recall` to restore any hit in full.
  *
- * Neither call does a model round-trip and neither paraphrases: the log is
- * append-only, so the output is always the original content.
+ * Neither call does a model round-trip and neither paraphrases: the output is
+ * the durable event content. Normal events keep their original tokens; a PTC
+ * dispatch record may lag the canonical value and may have been replaced by a
+ * spill preview plus an opaque locator.
  *
  * Registered as the `recall` and `search` tools on any context providing
  * `tools`.
@@ -35,9 +37,9 @@ export function resolveConfig(config = {}) {
   return { maxRecallTokens, maxSearchHits };
 }
 
-const RECALL_DESCRIPTION = "Restore the exact original content of earlier events in THIS conversation by a typed reference. type=\"seq\" with a seq selection id (\"3-7,15\", \"seq 12\", \"seqs 3-7\" — the checkpoint marker forms) restores those events; type=\"result\" with the \"result N\" pointer from a tool-call one-liner (\"result 3\" or \"3\") restores the original tool result, following official pruner provenance when needed (use a seq reference to inspect the pruned event itself); type=\"checkpoint\" with an ordinal (\"1\" = oldest, as in a \"[checkpoint N]\" elision line) or a \"seq N\" pointer restores that full checkpoint. The durable log is append-only, so recalled content is always the original tokens. To find events by keyword or regex instead, use the search tool.";
+const RECALL_DESCRIPTION = "Restore the recorded content of earlier durable events in THIS conversation by a typed reference. type=\"seq\" with a seq selection id (\"3-7,15\", \"seq 12\", \"seqs 3-7\" — the checkpoint marker forms) restores those events; type=\"result\" with the \"result N\" pointer from a tool-call one-liner (\"result 3\" or \"3\") restores the original tool result or settled PTC dispatch, following official pruner provenance when needed (use a seq reference to inspect the pruned event itself); type=\"checkpoint\" with an ordinal (\"1\" = oldest, as in a \"[checkpoint N]\" elision line) or a \"seq N\" pointer restores that full checkpoint. Normal durable events keep their original tokens. A tool/ptc-dispatch record may hold only a post-spill preview plus an opaque locator; the pre-spill canonical value returned to the program is not recoverable from the log, and the locator is not a stable structured field. PTC dispatch log appends can lag the canonical value inside the same run_code: use the direct tool return for immediate results, and search/recall for committed history (usually after the outer run_code returns/drains). To find events by keyword or regex instead, use the search tool.";
 
-const SEARCH_DESCRIPTION = "Search THIS conversation's durable event log by keyword or regular expression (case-insensitive, Unicode-aware). Every event ever recorded is searchable, including content elided or truncated by compaction checkpoints — the log is append-only and untouched. Returns the matching events with their (seq N) seq numbers and the matching lines. Then call recall with a (seq N) pointer to restore any hit's full exact original content. Escape regex special characters (e.g. use \\\\( for a literal parenthesis).";
+const SEARCH_DESCRIPTION = "Search THIS conversation's durable event log by keyword or regular expression (case-insensitive, Unicode-aware). It finds recorded event content, including content elided or truncated by compaction checkpoints. A tool/ptc-dispatch record may lag the canonical value inside the same run_code and may contain only a post-spill preview plus an opaque locator, not the full canonical value; use the direct tool return for immediate results and this search for committed history. Returns matching events with their (seq N) seq numbers and matching lines. Then call recall with a (seq N) pointer to restore the durable content. Escape regex special characters (e.g. use \\\\( for a literal parenthesis).";
 
 const RECALL_OUTPUT = {
   schema: {

@@ -4,7 +4,7 @@
 
 Instant, near-lossless context compaction for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — an **alternative backend for `@deepseek-ai/dsh-compaction-basic`** that replaces LLM summarization with the deterministic conversation-compiler principle of [lllyasviel/VCC](https://github.com/lllyasviel/VCC).
 
-A compaction compresses a shadowed history span in **milliseconds, with zero model calls**, keeping **original tokens only** — no paraphrase, no hallucination, no summarizer cost. Everything that is cut is still recoverable through `(seq N)` pointers into the durable session log.
+A compaction compresses a shadowed history span in **milliseconds, with zero model calls**, keeping **original tokens only** — no paraphrase, no hallucination, no summarizer cost. Everything that is cut from a durable event remains recoverable through `(seq N)` pointers into the durable session log; a PTC dispatch record replaced by a spill policy is the documented exception (its recorded preview is returned, not the pre-spill canonical value).
 
 ## Key features
 
@@ -50,18 +50,25 @@ next question
 
 Every tool call is ONE line: the key argument for whitelisted tools (`toolArgTools`), name-only for the rest (`* job_kill (seq 9 -> result 10)`), nothing at all for `hideTools` rows. Tool results never occupy entries — the `-> result N` pointer keeps them one `recall(type:"result")` away. Long user/assistant text is truncated to its budget with `...(truncated from seq N)`; every elision names the durable event that still holds the full content.
 
+Nested PTC calls inside `run_code` are log-only events, so the checkpoint keeps the outer `description` and adds one row per nested dispatch with its own stable start/settle pointers (for example `* read "a.js" (seq 4 -> result 5)`). A start-only row appears only when the outer result is the host's `TOOL_OUTCOME_UNKNOWN` recovery outcome; no settle is fabricated.
+
 ## Recall: the lossless read-back layer
 
-The package also ships the counterparts that close the near-lossless loop — **same-session recall** for the agent and the human. Because the session log is append-only, every token the compiler ever elided is still recoverable:
+The package also ships the counterparts that close the near-lossless loop — **same-session recall** for the agent and the human. Because the session log is append-only, every token the compiler elided from a durable event remains in the log:
 
 | Entry point | Module | What it does |
 |---|---|---|
-| `recall` **tool** (model-facing) | `dsh-compaction-instant/tool` | Typed restore: `type:"seq"` with `(seq N)`/`(seqs A-B)` markers, `type:"result"` with the `result N` pointer, `type:"checkpoint"` with a `[checkpoint N]` ordinal — restores exact original content into the current tool result |
+| `recall` **tool** (model-facing) | `dsh-compaction-instant/tool` | Typed restore: `type:"seq"` with `(seq N)`/`(seqs A-B)` markers, `type:"result"` with the `result N` pointer (including settled PTC dispatch), `type:"checkpoint"` with a `[checkpoint N]` ordinal — restores recorded durable content into the current tool result; normal events keep their original tokens, while a PTC dispatch may be a spill preview |
 | `search` **tool** (model-facing, grep) | `dsh-compaction-instant/tool` | Keyword/regex search over the whole durable log — including content elided by compaction — returning matching events with their `(seq N)` pointers, ready for `recall` |
 | `/recall` **command** (human, grep) | `dsh-compaction-instant/command` | `/recall <keyword|regex>` appends a durable `form: "recall"` user message with the matching events and their seq pointers, so the next model turn sees them |
 | Shared cores | `dsh-compaction-instant/recall` + `dsh-compaction-instant/search` | Seq parsing (`12`, `3-7`, `seq 12` / `seqs 3-7`), log expansion, budgets, projection; regex compilation and hit rendering |
 
-Recall projects durable text, reasoning, raw tool-call arguments, nested tool-result content and file-reference metadata (readable/searchable references, not attachment bytes); log-only events render as labeled data dumps; missing seqs are reported; a `maxRecallTokens` budget (default **16000**) cuts with a provenance marker and counts the skipped remainder; searches cap shown hits (`maxSearchHits`, default **50**). Both plugins are separate rows, so they can be mounted next to **any** compaction backend — they only read the durable log.
+Recall projects durable text, reasoning, raw tool-call arguments, nested tool-result content and file-reference metadata (readable/searchable references, not attachment bytes); log-only events render as labeled data dumps; missing seqs are reported; a `maxRecallTokens` budget (default **16000**) cuts with a provenance marker and counts the skipped remainder; searches cap shown hits (`maxSearchHits`, default **50**). The executable tool value also carries structured `hits` (`seq`/`kind`/`text`) and recall `entries`/`seqs`, so a PTC program can go from search to recall without parsing display text; the Native render text is unchanged. Both plugins are separate rows, so they can be mounted next to **any** compaction backend — they only read the durable log.
+
+Two limits are part of the contract:
+
+- **Spill previews are durable content, not the full original.** A `tool/ptc-dispatch` record may be replaced by a spill policy before append. In that case recall/search return the recorded preview plus its retrieval hint/locator text; the locator is opaque, lives in the preview text rather than a stable event field, and must not be parsed. The pre-spill canonical value the program received cannot be reconstructed from the log.
+- **Dispatch logs can lag the canonical value.** Inside one `run_code`, the bridge returns a nested tool's canonical value before the corresponding dispatch log append completes. A program that needs a result immediately must use the direct tool return value; `search`/`recall` cover committed history, usually after the outer `run_code` returns and drains its dispatches. The canonical value having returned does not mean the settle event is already committed.
 
 Every checkpoint also frames a short **RECALL guide** at its head, telling the model exactly how to use `recall` / `search` to recover elided content. When a prior checkpoint is elided under cap pressure it never vanishes silently: it leaves a single `[checkpoint N]` line (N = compaction ordinal, 1 = oldest), which `recall(type:"checkpoint", id:"N")` restores in full.
 
@@ -207,6 +214,8 @@ In DSH 0.2.0 the shipped `standard` preset is one `@deepseek-ai/dsh-agent-preset
 3. Select the `standard` preset for a new validation session. Verify its resolved plugin module/version and that the engine mounts, then exercise `/compact` and recall. A preset being listed, or recall being available, is not an engine activation check. Do not assume an existing session has switched to a newly edited composition.
 
 A fully custom preset (a second `@deepseek-ai/dsh-agent-preset` row with its own `config.id`) works the same way and leaves the shipped `standard` untouched; select it explicitly. Only one `ctx.compaction` implementation may be mounted per preset context. Do not add a host-level engine as a fallback: an unscoped listener can receive agent events and race the preset-owned backend. `/compact` is backend-independent, but it still requires an active backend in the selected preset.
+
+**PTC presets are separate.** The shipped PTC preset (`preset-ptc`) sets `mode: "ptc"` for its tool group. Installing the bundle, or overriding `preset-standard` alone, does not change the engine used by sessions on `preset-ptc`. To run instant compaction under PTC, copy the shipped `preset-ptc` row into the profile patch, keep `mode: "ptc"`, `command-compact`, and `tool-result-pruner`, and replace only the engine row inside its `compaction` group with this package. Select that preset explicitly; a custom preset with `mode: "ptc"` works the same way. Bundle installation still does not activate the instant engine by itself.
 
 ### Upgrading a tarball deployment
 

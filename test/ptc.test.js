@@ -21,6 +21,7 @@ import { InstantCompactionEngine } from "../src/index.js";
 import { buildPtcDispatchIndex } from "../src/ptc.js";
 import { expandSelections, parseSeqSpec, resolveRecallReference } from "../src/recall.js";
 import { compactSurfaceRegion } from "../src/region.js";
+import { searchSession } from "../src/search.js";
 import * as recallTools from "../src/tool.js";
 
 /** Programmable in-process runtime. Tests set `behavior` to drive `request.bindings`. */
@@ -631,6 +632,132 @@ test("corrupt dispatch pairing aborts compaction inside an error bracket", async
     assert.deepEqual(session.surface.nodes, surfaceBefore);
   } finally {
     await ctx.fiber.dispose();
+  }
+});
+
+test("spill-policy previews stay visible and are not called the full original", async () => {
+  const setup = await setupPtc();
+  try {
+    setup.ctx.tools.register(defineTool({
+      name: "read",
+      description: "Read a file.",
+      parameters: { file_path: { type: "string", required: true } },
+      output: {
+        schema: { type: "string" },
+        render: (_args, value) => [{ type: "text", text: value }]
+      },
+      execute: (args) => Promise.resolve(`FULL CANONICAL PAYLOAD for ${args.file_path}`)
+    }));
+    setup.ctx.on("tools/ptc-dispatch-log", async (dispatch, next) => {
+      const content = await next();
+      if (dispatch.name !== "read") return content;
+      return [{ type: "text", text: "PREVIEW: full payload was spilled; locator: spill://opaque-handle" }];
+    });
+    const session = makePtcSession();
+    session.append("turn/start", { turn: 1 });
+    session.append("user/message", createUserMessage({
+      content: [{ type: "text", text: "inspect" }], source: { kind: "user" }
+    }), { surfaceOp: "append" });
+    const code = "await tools.read({ file_path: 'a.js' })";
+    session.append("assistant/message", {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{ type: "tool-call", id: "spill-call", name: RUN_CODE_NAME, arguments: JSON.stringify({ code, description: "Inspect a.js" }) }],
+        source: { provider: "p", model: "m" }
+      })
+    }, { surfaceOp: "append" });
+    setup.runtime.behavior = async (request) => {
+      const value = await request.bindings[0].functions.read({ file_path: "a.js" });
+      return { logs: [], value };
+    };
+    const executed = await runCode(setup.ctx, session, code, { callId: "spill-call", description: "Inspect a.js" });
+    assert.equal(executed.isError, false);
+    assert.match(executed.value.result, /FULL CANONICAL PAYLOAD/);
+    const settle = readDispatch(session).find((event) => event.type === "tool/ptc-dispatch");
+    assert.match(settle.data.content[0].text, /PREVIEW/);
+    assert.match(settle.data.content[0].text, /spill:\/\/opaque-handle/);
+    const tool = recallTools.defineRecallTool(recallTools.resolveConfig({}));
+    const recalled = await tool.execute({ type: "result", id: String(settle.seq) }, { agent: { session } });
+    assert.match(recalled.text, /PREVIEW/);
+    assert.match(recalled.text, /spill:\/\/opaque-handle/);
+    assert.doesNotMatch(recalled.text, /FULL CANONICAL PAYLOAD/);
+    const found = await recallTools.defineSearchTool(recallTools.resolveConfig({})).execute({
+      pattern: "spill://"
+    }, { agent: { session } });
+    assert.ok(found.hits.some((hit) => hit.seq === settle.seq));
+    await setup.ctx.fiber.dispose();
+  } catch (error) {
+    await setup.ctx.fiber.dispose();
+    throw error;
+  }
+});
+
+test("dispatch logs can land after the canonical value returns", async () => {
+  const setup = await setupPtc();
+  try {
+    setup.ctx.tools.register(defineTool({
+      name: "read",
+      description: "Read a file.",
+      parameters: { file_path: { type: "string", required: true } },
+      output: {
+        schema: { type: "string" },
+        render: (_args, value) => [{ type: "text", text: value }]
+      },
+      execute: () => Promise.resolve("TIMING_SENTINEL")
+    }));
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    setup.ctx.on("tools/ptc-dispatch-log", async (dispatch, next) => {
+      const content = await next();
+      if (dispatch.name === "read") await gate;
+      return content;
+    });
+    const session = makePtcSession();
+    session.append("turn/start", { turn: 1 });
+    session.append("user/message", createUserMessage({
+      content: [{ type: "text", text: "inspect" }], source: { kind: "user" }
+    }), { surfaceOp: "append" });
+    const code = [
+      "const value = await tools.read({ file_path: 'a.js' });",
+      "const found = await tools.search({ pattern: 'TIMING_SENTIN[E]L' });",
+      "return { value, immediateMatches: found.totalMatches };"
+    ].join("\n");
+    session.append("assistant/message", {
+      turn: 1,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{ type: "tool-call", id: "timing-call", name: RUN_CODE_NAME, arguments: JSON.stringify({ code, description: "Time the log" }) }],
+        source: { provider: "p", model: "m" }
+      })
+    }, { surfaceOp: "append" });
+    let markSearched;
+    const searched = new Promise((resolve) => {
+      markSearched = resolve;
+    });
+    setup.runtime.behavior = async (request) => {
+      const value = await request.bindings[0].functions.read({ file_path: "a.js" });
+      const found = await request.bindings[0].functions.search({ pattern: "TIMING_SENTIN[E]L" });
+      markSearched();
+      return { logs: [], value: { value, immediateMatches: found.totalMatches } };
+    };
+    const running = runCode(setup.ctx, session, code, { callId: "timing-call", description: "Time the log" });
+    await searched;
+    const immediate = searchSession(session, "TIMING_SENTIN[E]L", { maxRecallTokens: 16000, maxSearchHits: 50 });
+    assert.equal(immediate.totalMatches, 0, "the settled dispatch log is not visible before drain");
+    release();
+    const executed = await running;
+    assert.equal(executed.isError, false);
+    assert.equal(executed.value.result.immediateMatches, 0);
+    const afterDrain = searchSession(session, "TIMING_SENTIN[E]L", { maxRecallTokens: 16000, maxSearchHits: 50 });
+    assert.equal(afterDrain.totalMatches, 1);
+    assert.equal(afterDrain.hits[0].kind, "tool/ptc-dispatch");
+  } finally {
+    await setup.ctx.fiber.dispose();
   }
 });
 

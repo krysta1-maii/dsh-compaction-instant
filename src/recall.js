@@ -3,10 +3,12 @@
  *
  * The lossless counterpart of the VCC-style compiler: compaction checkpoints
  * mark every elision with a `(seq N)` / `(seqs A-B)` pointer into the durable
- * session log; this module expands those pointers back into the exact
- * original content. Because the log is append-only, every token the compiler
- * ever truncated or elided is still present and recoverable — recall closes
- * the loop that makes the compaction engine near-lossless.
+ * session log; this module expands those pointers back into the recorded
+ * event content. Because the log is append-only, every token the compiler
+ * truncated or elided from a durable event remains present — recall closes
+ * the loop that makes the compaction engine near-lossless. PTC dispatch
+ * records are an exception: a spill policy may have replaced their content
+ * with a preview plus an opaque locator before it was appended.
  *
  * Shared by the model-facing `recall` tool (`./tool`). Reads the DSH 0.1.2
  * immutable log APIs (`snapshotEvents`, `eventAt`, `deriveEventMessage`), so a
@@ -263,7 +265,7 @@ export function resolveRecallReference(session, type, id, signal) {
 }
 
 /**
- * Recall the full original content of the requested seqs from one session's
+ * Recall the recorded content of the requested seqs from one session's
  * durable log. Message events project through `deriveEventMessage`; log-only
  * events render as a labeled data dump. The total output is bounded by
  * `config.maxRecallTokens`; a cut appends a provenance marker and remaining

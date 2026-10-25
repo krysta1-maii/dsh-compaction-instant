@@ -1,11 +1,12 @@
 /**
  * Keyword/regex search over the durable session log for `dsh-compaction-instant`.
  *
- * The retrieval counterpart of the VCC-style compiler's `--grep` view: the
- * append-only session log is the full transcript, so this module scans every
- * event's projected content and returns the matching events with their
- * `(seq N)` pointers. An agent (or the `/recall` command) can then call
- * `recall` with any pointer to restore the exact original tokens.
+ * The retrieval counterpart of the VCC-style compiler's `--grep` view: this
+ * module scans every durable event's projected content and returns the
+ * matching events with their `(seq N)` pointers. An agent (or the `/recall`
+ * command) can then call `recall` with a pointer to restore the recorded
+ * content. PTC dispatch records may lag the canonical value inside the same
+ * run_code and may hold only a post-spill preview plus an opaque locator.
  *
  * Nothing is modified, nothing is elided — only the rendered hit lines are
  * bounded, by the shared `maxRecallTokens` budget and a per-hit line cap.
@@ -99,7 +100,7 @@ export function searchSession(session, patternSource, config, signal) {
     ...(omitted > 0 ? [`[${omitted} more matching event(s) omitted — narrow the pattern or use recall]`] : []),
     ...(truncated ? ["[search budget exhausted; some hits were cut]"] : [])
   ];
-  if (hits.length > 0) lines.push("[use recall with a (seq N) pointer to restore any hit's full original content]");
+  if (hits.length > 0) lines.push("[use recall with a (seq N) pointer to restore any hit's recorded content]");
   const text = lines.join("\n\n");
   return {
     pattern: pattern.source,

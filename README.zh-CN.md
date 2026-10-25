@@ -2,7 +2,7 @@
 
 为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 打造的**即时、近无损上下文压缩**引擎——**官方引擎 `@deepseek-ai/dsh-compaction-basic` 的替代后端**，用 [lllyasviel/VCC](https://github.com/lllyasviel/VCC) 的"对话编译"思路取代原来的 LLM 摘要。
 
-对话太长了怎么办？普通方案是让模型把旧内容"总结"一遍（慢、花钱、还会丢细节）。本引擎不总结，而是把旧内容**重新整理成一份紧凑的存档**（后面统称"检查点"）：毫秒级完成、不调用模型、只使用原来的原文，不改写、不编造。被收进存档的内容随时可以原样找回来。
+对话太长了怎么办？普通方案是让模型把旧内容"总结"一遍（慢、花钱、还会丢细节）。本引擎不总结，而是把旧内容**重新整理成一份紧凑的存档**（后面统称"检查点"）：毫秒级完成、不调用模型、只使用原来的原文，不改写、不编造。被收进存档的持久事件内容随时可以通过指针找回；被 spill 策略替换过的 PTC dispatch 记录只能取回写入日志的 preview，详见 Recall 边界。
 
 ## 主要特性
 
@@ -48,18 +48,25 @@ next question
 
 每个工具调用只占**一行**：白名单里的工具（`toolArgTools`）显示关键参数，其他工具只显示名字（`* job_kill (seq 9 -> result 10)`），`hideTools` 里列的工具完全不出现。工具结果不占位置——通过 `-> result N` 指针，用一次 `recall(type:"result")` 就能取回。较长的用户/助手文本按预算截断，并在末尾标注 `...(truncated from seq N)`；每处省略都写明了完整内容存在哪个事件里。
 
+`run_code` 内部的 PTC 调用是 log-only 事件，因此检查点会保留外层 `description`，并为每个 nested dispatch 增加一行带稳定 start/settle 指针的记录（例如 `* read "a.js" (seq 4 -> result 5)`）。只有外层结果是宿主的中断恢复结果 `TOOL_OUTCOME_UNKNOWN` 时才会出现 start-only 行，且不会伪造 settle。
+
 ## Recall：把丢掉的内容找回来
 
-本包还配套了"找回"能力——**同一会话内的回读**，模型和人都能用。因为会话日志只增不改，编译器省略过的每一个字都还在，随时可取：
+本包还配套了"找回"能力——**同一会话内的回读**，模型和人都能用。因为会话日志只增不改，编译器从持久事件中省略过的每一个字都还在，随时可取：
 
 | 入口 | 模块 | 作用 |
 |---|---|---|
-| `recall` **工具**（给模型用） | `dsh-compaction-instant/tool` | 按类型恢复原文：`type:"seq"` 配合 `(seq N)`/`(seqs A-B)` 标记，`type:"result"` 配合 `result N` 指针，`type:"checkpoint"` 配合 `[checkpoint N]` 序号——把原始内容一字不差地恢复到当前工具结果里 |
+| `recall` **工具**（给模型用） | `dsh-compaction-instant/tool` | 按类型恢复持久事件的记录内容：`type:"seq"` 配合 `(seq N)`/`(seqs A-B)` 标记，`type:"result"` 配合 `result N` 指针（含已结算的 PTC dispatch），`type:"checkpoint"` 配合 `[checkpoint N]` 序号；正常事件保持原文，PTC dispatch 可能只有 spill preview |
 | `search` **工具**（给模型用，grep） | `dsh-compaction-instant/tool` | 在整个持久日志里按关键词/正则搜索——包括被压缩掉的内容——返回带 `(seq N)` 指针的匹配事件，可直接交给 `recall` 取回 |
 | `/recall` **命令**（给人用，grep） | `dsh-compaction-instant/command` | `/recall <关键词|正则>` 追加一条持久的用户消息，内含匹配事件和 seq 指针，下一轮模型就能看到 |
 | 共享核心 | `dsh-compaction-instant/recall` + `dsh-compaction-instant/search` | seq 解析（`12`、`3-7`、`seq 12` / `seqs 3-7`）、日志展开、预算、字段筛选；正则编译与命中展示 |
 
-Recall 可回读日志中的文本、推理过程、工具调用的完整参数、嵌套的工具结果与文件引用元数据（可回读/搜索的是引用，不是附件字节）；只在日志里出现过的事件会以带标签的原始数据展示；找不到的 seq 会明确报错。`maxRecallTokens` 预算（默认 **16000**）超限时会截断并标注来源、统计跳过多少；搜索限制展示条数（`maxSearchHits`，默认 **50**）。这两个插件是独立的一行，可以挂在**任何**压缩引擎旁边——它们只读日志，不依赖本引擎。
+Recall 可回读日志中的文本、推理过程、工具调用的完整参数、嵌套的工具结果与文件引用元数据（可回读/搜索的是引用，不是附件字节）；只在日志里出现过的事件会以带标签的原始数据展示；找不到的 seq 会明确报错。`maxRecallTokens` 预算（默认 **16000**）超限时会截断并标注来源、统计跳过多少；搜索限制展示条数（`maxSearchHits`，默认 **50**）。工具 canonical value 还包含结构化的 `hits`（`seq`/`kind`/`text`）与 recall 的 `entries`/`seqs`，PTC 程序无需解析展示文本即可完成 search → recall；Native 渲染文本保持不变。这两个插件是独立的一行，可以挂在**任何**压缩引擎旁边——它们只读日志，不依赖本引擎。
+
+有两条边界属于契约的一部分：
+
+- **Spill preview 是持久内容，不是完整原文。** `tool/ptc-dispatch` 记录可能在写入前被 spill 策略替换。此时 recall/search 只能返回当时写入的 preview 以及其中的 retrieval hint/locator 文本；locator 是不透明句柄，位于 preview 文本中而不是稳定的事件字段，不得解析。程序当时取得的 pre-spill canonical value 无法从日志还原。
+- **dispatch 日志可能晚于 canonical value。** 同一个 `run_code` 内，bridge 先返回 nested 工具的 canonical value，再异步写入 dispatch 日志。需要立即处理结果时，应使用该工具的直接返回值；`search`/`recall` 面向已提交的历史，通常要等外层 `run_code` 返回并 drain，或已明确观察到目标 append。canonical value 已返回不等于 settle 已提交。
 
 每个检查点开头还附了一段简短的 **RECALL 使用指南**，告诉模型怎么用 `recall` / `search` 找回被省略的内容。如果更早的检查点因为空间不够被省略，它不会无声消失：会留下一行 `[checkpoint N]`（N 是压缩序号，1 = 最早），用 `recall(type:"checkpoint", id:"N")` 就能完整恢复。
 
@@ -204,6 +211,8 @@ DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` �
 
 3. 新建验证会话时选择 `standard` 预设，检查实际解析的插件模块/版本及引擎挂载，再验证 `/compact` 与 recall。预设出现在列表里、recall 可用，都不能代替引擎激活检查；也不要假定已有会话已切换到编辑后的组合。
 
+**PTC 预设是独立的。** 内置 PTC 预设（`preset-ptc`）为工具组设置了 `mode: "ptc"`。安装本包、或只覆盖 `preset-standard`，都不会改变使用 `preset-ptc` 的会话所用引擎。要在 PTC 下启用即时压缩，请把内置 `preset-ptc` 行复制到 profile patch，保留 `mode: "ptc"`、`command-compact` 和 `tool-result-pruner`，只把其 `compaction` 组里的引擎行换成本包，然后显式选择该预设；使用 `mode: "ptc"` 的自定义预设同理。bundle 安装本身仍不会激活 instant 引擎。
+
 完全自定义的预设（另起一行 `@deepseek-ai/dsh-agent-preset`，使用自己的 `config.id`）同样可行，且不影响内置 `standard`，只需显式选择。每个预设上下文只能挂载一个 `ctx.compaction` 实现。不要添加宿主层引擎兜底：未限定作用域的监听器可能收到 agent 事件，与预设后端竞争。`/compact` 本身不绑定特定后端，但所选预设仍须有已启用的压缩后端。
 
 ### 升级 tarball 部署
@@ -248,6 +257,6 @@ npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注
 - 之前的检查点原样保留，而不是重新摘要一遍（又快又无损）。
 - 手动 `/compact` 和自动压力压缩都会保留最近的一段原文；上限来自固定 `retainTokens` 或按上下文计算的 `retainRatio`。优先保留整回合，最新回合超限时只保留能装下的后缀，只有更早的部分进入检查点。
 - `compaction/summary` 事件携带**压缩后的条目本身**——UI 里可展开的检查点行显示的就是模型实际看到的内容，外面包一层**能自动变长的代码框**（框线永远比内容里的 ``` 长，所以含 markdown 的消息也能整齐地显示成一个代码块），检查点开头还有一段简短的使用指南，告诉模型怎么用 `recall` / `search` 找回被省略的内容。
-- 权衡：对以长对话、叙述为主的历史，检查点的信息密度可能不如 LLM 摘要（长句是截断而不是合并）。正在进行的对话有逐字保留的尾部（`retainTurns`/`retainTokens`）兜底，其余内容都能通过 `(seq N)` 指针 + recall 找回来。
+- 权衡：对以长对话、叙述为主的历史，检查点的信息密度可能不如 LLM 摘要（长句是截断而不是合并）。正在进行的对话有逐字保留的尾部（`retainTurns`/`retainTokens`）兜底，其余持久事件内容都能通过 `(seq N)` 指针 + recall 找回；被 spill 替换为 preview 的 PTC dispatch 记录例外。
 
 代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 声明本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。

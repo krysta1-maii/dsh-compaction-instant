@@ -438,7 +438,7 @@ const CHECKPOINT_CLOSE_TAG = "</compacted-checkpoint>";
  * agent how to recover content the compiler elided or truncated, using the
  * two recall tools that read the append-only durable log.
  */
-export const RECALL_GUIDE = "RECALL: append-only log — nothing is lost. `recall` restores original content: type \"seq\", id \"3-7\"; \"result\", id \"3\"; \"checkpoint\", id \"1\" (`[checkpoint N]` = dropped). `search` finds by keyword.";
+export const RECALL_GUIDE = "RECALL: append-only log — durable events stay. `recall` restores their recorded content: type \"seq\", id \"3-7\"; \"result\", id \"3\"; \"checkpoint\", id \"1\" (`[checkpoint N]` = dropped). `search` finds by keyword. A PTC dispatch record can lag the value returned in the same run_code and may hold only a spill preview plus an opaque locator; use the direct tool return for immediate results.";
 
 /** Per-node reference marker: the durable seq is the lossless pointer. */
 function seqRef(seq) {
