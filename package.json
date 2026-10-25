@@ -60,7 +60,7 @@
   "scripts": {
     "test": "node --test",
     "check": "npm run check:syntax && npm run typecheck",
-    "check:syntax": "node --check src/index.js && node --check src/compiler.js && node --check src/region.js && node --check src/recall.js && node --check src/search.js && node --check src/tool.js && node --check src/command.js && node --check src/settings.js && node --check src/client.js && node --check scripts/check-package.mjs",
+    "check:syntax": "node --check src/index.js && node --check src/compiler.js && node --check src/region.js && node --check src/recall.js && node --check src/search.js && node --check src/tool.js && node --check src/ptc.js && node --check src/command.js && node --check src/settings.js && node --check src/client.js && node --check scripts/check-package.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "check:package": "node scripts/check-package.mjs"
   },

@@ -38,7 +38,7 @@ const CONFIG = {
   stripNoiseXml: true,
   noisePatterns: compileNoisePatterns(DEFAULT_NOISE_PATTERNS),
   toolKeyFields: {},
-  toolArgTools: ["read", "write", "edit", "glob", "grep", "bash", "shell", "web_search", "skill", "subagent", "subagent_fork", "ralph", "workflow"],
+  toolArgTools: ["read", "write", "edit", "glob", "grep", "bash", "shell", "web_search", "skill", "subagent", "subagent_fork", "ralph", "workflow", "run_code"],
   hideTools: []
 };
 
@@ -154,6 +154,107 @@ test("compileNodes collapses a tool step and elides reasoning", () => {
   assert.match(text, /\* read "a\.js" \(seq 2 -> result 3\)/);
   assert.doesNotMatch(text, /-> read: ok/);
   assert.doesNotMatch(text, /file contents/);
+  assert.deepEqual(entries.find((entry) => entry.kind === "tool").recoverySeqs, [2, 3]);
+});
+
+test("compileNodes renders run_code description and nested dispatch rows", () => {
+  const code = "const a = await tools.read({ file_path: 'a.js' });\nawait tools.bash({ command: 'npm test' })";
+  const nodes = [
+    { seq: 2, message: { role: "assistant", content: [
+      { type: "tool-call", id: "call-1", name: "run_code", arguments: JSON.stringify({ code, description: "Inspect a.js" }) }
+    ], source: { provider: "p", model: "m" } } },
+    { seq: 8, message: { role: "tool", toolCallId: "call-1", content: [] } }
+  ];
+  const ptcIndex = {
+    byOuterCallId: new Map([["call-1", [
+      { startSeq: 4, name: "read", arguments: { file_path: "a.js" }, settleSeq: 5, isError: false },
+      { startSeq: 6, name: "bash", arguments: { command: "npm test" }, settleSeq: 7, isError: false }
+    ]]]),
+    referencedSeqs: [3, 4, 5, 6, 7]
+  };
+  const { entries, stats } = compileNodes(nodes, CONFIG, undefined, ptcIndex);
+  const text = joinCompiledEntries(entries);
+  assert.match(text, /\* run_code "Inspect a\.js" \(seq 2 -> result 8\)/);
+  assert.match(text, /\* read "a\.js" \(seq 4 -> result 5\)/);
+  assert.match(text, /\* bash "npm test" \(seq 6 -> result 7\)/);
+  // The full multi-line program is recovered through the outer seq, not shown.
+  assert.doesNotMatch(text, /await tools\.read/);
+  assert.doesNotMatch(text, /\[a\.js\]/);
+  assert.equal(stats.toolCalls, 1, "nested rows do not change surface tool-call stats");
+  const bySeq = new Map(entries.map((entry) => [entry.seq, entry]));
+  assert.deepEqual(bySeq.get(2).recoverySeqs, [2, 8]);
+  assert.deepEqual(bySeq.get(4).recoverySeqs, [4, 5]);
+  assert.deepEqual(bySeq.get(6).recoverySeqs, [6, 7]);
+});
+
+test("run_code rendering ignores argument property order and uses nested JSON values as-is", () => {
+  const code = "await tools.read({ file_path: 'a.js' })";
+  const nodesFor = (argumentsRaw) => [
+    { seq: 2, message: { role: "assistant", content: [
+      { type: "tool-call", id: "call-1", name: "run_code", arguments: argumentsRaw }
+    ] } },
+    { seq: 3, message: { role: "tool", toolCallId: "call-1", content: [] } }
+  ];
+  const ptcIndex = {
+    byOuterCallId: new Map([["call-1", [
+      { startSeq: 4, name: "read", arguments: { file_path: "a.js" }, settleSeq: 5, isError: false },
+      { startSeq: 6, name: "bash", arguments: "echo hello", settleSeq: 7, isError: false },
+      { startSeq: 8, name: "read", arguments: ["array-arg"], settleSeq: 9, isError: false },
+      { startSeq: 10, name: "write", arguments: { file_path: "文件.js" }, settleSeq: 11, isError: false }
+    ]]]),
+    referencedSeqs: [4, 5, 6, 7, 8, 9, 10, 11]
+  };
+  const first = compileNodes(nodesFor(JSON.stringify({ code, description: "Inspect a.js" })), CONFIG, undefined, ptcIndex);
+  const second = compileNodes(nodesFor(JSON.stringify({ description: "Inspect a.js", code })), CONFIG, undefined, ptcIndex);
+  assert.deepEqual(first.entries, second.entries, "both JSON property orders compile identically");
+  const text = joinCompiledEntries(first.entries);
+  assert.match(text, /\* read "a\.js" \(seq 4 -> result 5\)/);
+  assert.match(text, /\* bash "echo hello" \(seq 6 -> result 7\)/, "string dispatch arguments render literally");
+  assert.doesNotMatch(text, /\\"echo hello\\"/);
+  assert.match(text, /\* read \(seq 8 -> result 9\)/, "array dispatch arguments are name-only");
+  assert.match(text, /\* write "文件\.js" \(seq 10 -> result 11\)/, "multi-byte key arguments survive");
+});
+
+test("run_code hideTools rules cover the whole subtree or one nested tool", () => {
+  const nodes = [
+    { seq: 2, message: { role: "assistant", content: [
+      { type: "tool-call", id: "call-1", name: "run_code", arguments: JSON.stringify({ code: "x", description: "Inspect" }) }
+    ] } },
+    { seq: 5, message: { role: "tool", toolCallId: "call-1", content: [] } }
+  ];
+  const ptcIndex = {
+    byOuterCallId: new Map([["call-1", [
+      { startSeq: 3, name: "read", arguments: { file_path: "a.js" }, settleSeq: 4, isError: false },
+      { startSeq: 6, name: "bash", arguments: { command: "npm test" }, settleSeq: 7, isError: false }
+    ]]]),
+    referencedSeqs: [3, 4, 6, 7]
+  };
+  const hiddenOuter = compileNodes(nodes, { ...CONFIG, hideTools: ["run_code"] }, undefined, ptcIndex);
+  assert.equal(hiddenOuter.entries.length, 0, "hiding run_code hides its nested rows");
+  const hiddenNested = compileNodes(nodes, { ...CONFIG, hideTools: ["bash"] }, undefined, ptcIndex);
+  const text = joinCompiledEntries(hiddenNested.entries);
+  assert.match(text, /run_code/);
+  assert.match(text, /read/);
+  assert.doesNotMatch(text, /bash/);
+});
+
+test("a start-only dispatch row omits the result pointer and keeps its start seq", () => {
+  const nodes = [
+    { seq: 2, message: { role: "assistant", content: [
+      { type: "tool-call", id: "call-1", name: "run_code", arguments: JSON.stringify({ code: "x", description: "Interrupted" }) }
+    ] } },
+    { seq: 5, message: { role: "tool", toolCallId: "call-1", content: [] } }
+  ];
+  const ptcIndex = {
+    byOuterCallId: new Map([["call-1", [
+      { startSeq: 3, name: "read", arguments: { file_path: "a.js" } }
+    ]]]),
+    referencedSeqs: [3]
+  };
+  const { entries } = compileNodes(nodes, CONFIG, undefined, ptcIndex);
+  const nested = entries.find((entry) => entry.seq === 3);
+  assert.equal(nested.text, '* read "a.js" (seq 3)');
+  assert.deepEqual(nested.recoverySeqs, [3]);
 });
 
 test("compileNodes renders multiline bash arguments as first line plus line count", () => {
@@ -404,7 +505,7 @@ test("compileRegion elides tool rows before conversation text", () => {
   // The cap binds below the rescale-converged total but above the total once
   // enough tool rows are removed, so only low-value rows may be elided — the
   // conversation text is rescaled but never removed.
-  const { entries, stats, capped } = compileRegion(nodes, { ...CONFIG, maxTokens: 565 });
+  const { entries, stats, capped } = compileRegion(nodes, { ...CONFIG, maxTokens: 566 });
   assert.ok(capped, "cap enforcement ran");
   assert.ok(stats.elidedToolRows > 0, "low-value rows were elided first");
   assert.equal(stats.elidedRows, 0, "no conversation text was elided");

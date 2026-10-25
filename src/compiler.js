@@ -299,7 +299,8 @@ export const DEFAULT_TOOL_KEY_FIELDS = Object.freeze({
   interrupt_agent: "agent_id",
   job_kill: "job_id",
   job_output: "job_id",
-  send_message: "message"
+  send_message: "message",
+  run_code: "description"
 });
 
 /**
@@ -322,7 +323,8 @@ export const DEFAULT_ARG_TOOLS = Object.freeze([
   "subagent",
   "subagent_fork",
   "ralph",
-  "workflow"
+  "workflow",
+  "run_code"
 ]);
 
 /**
@@ -447,7 +449,7 @@ function seqRef(seq) {
  * Build marker for this compiler revision. Bumped whenever the compiled
  * output format changes, so debug logs can prove which code version ran.
  */
-export const COMPILER_REV = "vcc-compiler-debug-3";
+export const COMPILER_REV = "vcc-compiler-debug-4";
 
 /**
  * Emit one debug line through the configured sink (and stderr). The sink is
@@ -473,15 +475,34 @@ function debugLog(config, tag, line) {
 }
 
 /**
+ * Project one nested PTC dispatch's key argument without re-parsing: dispatch
+ * arguments are already JSON values. Objects use the same key-field/fallback
+ * selection as native calls; strings are literal; arrays and other scalars
+ * stay name-only. A tool outside `toolArgTools` is always name-only.
+ * @param name - nested tool name.
+ * @param args - JSON-normalized dispatch arguments.
+ * @param argTools - effective key-argument whitelist.
+ * @param keyFields - merged tool-name → preferred-field map.
+ * @returns the display string, or undefined for name-only.
+ */
+function nestedToolArg(name, args, argTools, keyFields) {
+  if (!argTools.includes(name)) return undefined;
+  if (typeof args === "string") return args;
+  if (args !== null && typeof args === "object" && !Array.isArray(args)) return pickToolKeyArg(name, args, keyFields);
+  return undefined;
+}
+
+/**
  * Compile one ordered region into compact entries.
  * @param nodes - ordered `{ seq, message }` projections of the shadowed
  *   surface nodes; `message` may be null (non-projecting node).
  * @param config - resolved compiler-relevant configuration (see index.js).
  * @param budgets - optional per-block budgets; defaults to the config values
  *   (the budget-cap loop passes scaled budgets on retry).
+ * @param ptcIndex - optional PTC dispatch index for selected run_code calls.
  * @returns `{ entries, stats }` where each entry is one line-group string.
  */
-export function compileNodes(nodes, config, budgets) {
+export function compileNodes(nodes, config, budgets, ptcIndex) {
   const effective = budgets ?? {
     textTokens: config.textTokens,
     userTextTokens: config.userTextTokens,
@@ -511,6 +532,7 @@ export function compileNodes(nodes, config, budgets) {
     elidedToolRows: 0,
     elidedRows: 0
   };
+  let nestedCount = 0;
   // Pre-pass over the ordered nodes: map each tool-call id to the seq of its
   // result node, so every call one-liner can carry a VCC-style result pointer
   // (`(seq N -> result M)`) even though results no longer occupy entries.
@@ -543,8 +565,8 @@ export function compileNodes(nodes, config, budgets) {
    * @param text - rendered entry text.
    * @param kind - entry kind (see the kind list above).
    */
-  const pushEntry = (seq, text, kind) => {
-    entries.push({ seq, text, kind });
+  const pushEntry = (seq, text, kind, recoverySeqs) => {
+    entries.push(recoverySeqs === undefined ? { seq, text, kind } : { seq, text, kind, recoverySeqs });
     stats.entries += 1;
     stats.tokens += estimateEntryTokens(text);
   };
@@ -609,7 +631,25 @@ export function compileNodes(nodes, config, budgets) {
           const ref = resultSeq === undefined ? seqRef(node.seq) : `${seqRef(node.seq)} -> result ${resultSeq}`;
           const kept = truncateTokens(oneLine, effective.toolCallTokens, seqRef(node.seq));
           debugLog(config, "tool", `seq=${node.seq} name=${name} ${diag} line=${JSON.stringify(oneLine.slice(0, 80))} truncated=${kept.truncated} ref=${ref}`);
-          pushEntry(node.seq, header + `${kept.text} (${ref})`, "tool");
+          pushEntry(node.seq, header + `${kept.text} (${ref})`, "tool", resultSeq === undefined ? [node.seq] : [node.seq, resultSeq]);
+          // Nested dispatches are log-only, so their durable start/settle seqs
+          // become the model-visible recovery pointers instead of surface seqs.
+          for (const pair of ptcIndex?.byOuterCallId.get(block.id) ?? []) {
+            if (hiddenTools.has(pair.name)) {
+              debugLog(config, "ptc", `seq=${pair.startSeq} name=${pair.name} HIDDEN (hideTools)`);
+              continue;
+            }
+            const nestedArg = nestedToolArg(pair.name, pair.arguments, argTools, keyFields);
+            const nestedLine = nestedArg === undefined ? `* ${pair.name}` : `* ${pair.name} "${oneLineArg(nestedArg)}"`;
+            const nestedRef = pair.settleSeq === undefined
+              ? seqRef(pair.startSeq)
+              : `${seqRef(pair.startSeq)} -> result ${pair.settleSeq}`;
+            const nestedKept = truncateTokens(nestedLine, effective.toolCallTokens, seqRef(pair.startSeq));
+            const recoverySeqs = pair.settleSeq === undefined ? [pair.startSeq] : [pair.startSeq, pair.settleSeq];
+            pushEntry(pair.startSeq, `${nestedKept.text} (${nestedRef})`, "tool", recoverySeqs);
+            nestedCount += 1;
+            debugLog(config, "ptc", `seq=${pair.startSeq} name=${pair.name} settle=${pair.settleSeq ?? "(unsettled)"} line=${JSON.stringify(nestedLine.slice(0, 80))} truncated=${nestedKept.truncated}`);
+          }
           continue;
         }
         if (block.type === "image") {
@@ -696,6 +736,7 @@ export function compileNodes(nodes, config, budgets) {
       }
     }
   }
+  debugLog(config, "ptc", `nested=${nestedCount} referenced=${ptcIndex?.referencedSeqs.length ?? 0}`);
   return { entries, stats };
 }
 
@@ -781,9 +822,10 @@ function seqSelectionsOf(dropped) {
  * `stats.tokens` includes this irreducible overhead rather than hiding it.
  * @param nodes - ordered `{ seq, message }` projections.
  * @param config - resolved compiler configuration.
+ * @param ptcIndex - optional PTC dispatch index for selected run_code calls.
  * @returns `{ entries, stats, capped }` — `capped` records cap enforcement.
  */
-export function compileRegion(nodes, config) {
+export function compileRegion(nodes, config, ptcIndex) {
   const baseBudgets = {
     textTokens: config.textTokens,
     userTextTokens: config.userTextTokens,
@@ -791,12 +833,12 @@ export function compileRegion(nodes, config) {
     toolResultExcerptTokens: config.toolResultExcerptTokens
   };
   let budgets = baseBudgets;
-  let result = compileNodes(nodes, config, budgets);
+  let result = compileNodes(nodes, config, budgets, ptcIndex);
   let attempts = 0;
   const maxAttempts = 4;
   while (result.stats.tokens > config.maxTokens && attempts < maxAttempts) {
     budgets = scaleBudgets(budgets, config.maxTokens / result.stats.tokens * 0.95);
-    result = compileNodes(nodes, config, budgets);
+    result = compileNodes(nodes, config, budgets, ptcIndex);
     attempts += 1;
   }
   let capped = false;

@@ -20,6 +20,8 @@ export interface RegionDependencies {
     compile(prepared: PreparedRegion, agent: CompactionAgentContext | undefined, signal: AbortSignal | undefined): Promise<{
         entries: readonly (string | { seq: number; text: string; kind?: string })[];
         stats: { tokens: number; [key: string]: unknown };
+        /** Extra durable sources inspected by the compiler; appended to the checkpoint provenance. */
+        referencedSeqs?: readonly SessionSeq[];
         provider: string;
         model: string;
         [key: string]: unknown;

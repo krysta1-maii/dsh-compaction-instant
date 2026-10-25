@@ -199,6 +199,8 @@ export interface CompiledRegion {
     stats: CompileStats;
     /** Whether the total cap forced budget rescaling or front elision. */
     capped: boolean;
+    /** Extra durable sources inspected by the compiler (PTC dispatch history). */
+    referencedSeqs?: readonly SessionSeq[];
     provider: string;
     model: string;
 }

@@ -18,6 +18,7 @@ import { CompactionEngine, ManualCompactionError } from "@deepseek-ai/dsh-compac
 import { CONTEXT_WINDOW_EXCEEDED_CODE } from "@deepseek-ai/dsh-llm";
 import { assertNever, deepFreeze } from "@deepseek-ai/dsh-util-values";
 import { compileNoisePatterns, compileRegion, COMPILER_REV, DEFAULT_ARG_TOOLS, DEFAULT_NOISE_PATTERNS, isCheckpointSource } from "./compiler.js";
+import { buildPtcDispatchIndex } from "./ptc.js";
 import { assertNoActiveCompaction, compactSurfaceRegion, selectCompactableRange } from "./region.js";
 
 // ── configuration resolution ───────────────────────────────────────────────
@@ -711,16 +712,18 @@ export class InstantCompactionEngine extends CompactionEngine {
       }
     }
     engineDebug(this.config, `compile span=${prepared.shadowedSeqs.length} seqs=${prepared.shadowedSeqs[0]}-${prepared.shadowedSeqs[prepared.shadowedSeqs.length - 1]} shadowedTokens=${prepared.shadowedTokenCount} cap=${this.effectiveMaxTokens(prepared.shadowedTokenCount)} checkpoints=${checkpointCount}`);
+    const ptcIndex = buildPtcDispatchIndex(prepared.session, nodes, signal);
     const { entries, stats, capped } = compileRegion(nodes, {
       ...this.config,
       maxTokens: this.effectiveMaxTokens(prepared.shadowedTokenCount),
       checkpointOrdinals
-    });
-    engineDebug(this.config, `compile done entries=${entries.length} tokens=${stats.tokens} capped=${capped} toolCalls=${stats.toolCalls} toolResults=${stats.toolResults}`);
+    }, ptcIndex);
+    engineDebug(this.config, `compile done entries=${entries.length} tokens=${stats.tokens} capped=${capped} toolCalls=${stats.toolCalls} toolResults=${stats.toolResults} referenced=${ptcIndex.referencedSeqs.length}`);
     return {
       entries,
       stats,
       capped,
+      referencedSeqs: ptcIndex.referencedSeqs,
       provider: COMPILER_PROVIDER,
       model: COMPILER_MODEL
     };

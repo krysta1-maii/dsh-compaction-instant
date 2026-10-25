@@ -345,7 +345,9 @@ async function compileCompaction(dependencies, prepared, agent, compactionId, so
     provider: compiled.provider,
     model: compiled.model,
     checkpointMessage,
-    framedTokenCount
+    framedTokenCount,
+    // Custom hooks may omit this; the built-in compiler always supplies it.
+    referencedSeqs: [...(compiled.referencedSeqs ?? [])]
   };
 }
 
@@ -387,7 +389,7 @@ export function assertSelectedSpanStable(dependencies, session, prepared) {
 
 /** Append one completed checkpoint record and replacement body without yielding. */
 function commitCompactionBody(session, startEvent, compiled) {
-  const { start, end, shadowedSeqs, shadowedTokenCount, summary, provider, model, checkpointMessage } = compiled;
+  const { start, end, shadowedSeqs, shadowedTokenCount, summary, provider, model, checkpointMessage, referencedSeqs } = compiled;
   const summaryEvent = session.append("compaction/summary", {
     compactionId: startEvent.data.compactionId,
     ...startEvent.data.sourceCommandId === undefined ? {} : { sourceCommandId: startEvent.data.sourceCommandId },
@@ -410,7 +412,8 @@ function commitCompactionBody(session, startEvent, compiled) {
     sourceEventSeqs: [
       startEvent.seq,
       summaryEvent.seq,
-      ...shadowedSeqs
+      ...shadowedSeqs,
+      ...referencedSeqs
     ]
   });
   return {

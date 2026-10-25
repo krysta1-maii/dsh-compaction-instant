@@ -14,6 +14,7 @@ import InstantCompactionPlugin, {
   resolveConfig,
   resolveTargetPolicy,
   routedTarget,
+  type CompiledRegion,
   type InstantCompactionConfig,
   type InstantCompactionSettings,
   type ResolvedCompactSpec,
@@ -27,6 +28,8 @@ import {
   DEFAULT_ARG_TOOLS,
   DEFAULT_NOISE_PATTERNS,
   DEFAULT_TOOL_KEY_FIELDS,
+  MAX_RECALL_ENTRIES,
+  MAX_RECALL_SPAN as COMPILER_MAX_RECALL_SPAN,
   RECALL_GUIDE,
   compileNodes,
   compileRegion,
@@ -47,6 +50,7 @@ import {
   stripNoiseXml,
   tokenize,
   truncateTokens,
+  type PtcDispatchIndex,
 } from 'dsh-compaction-instant/compiler';
 import {
   SurfaceChangedError,
@@ -159,12 +163,12 @@ export function checkRc2Contracts(
   void SurfaceChangedError;
 
   const parsed = parseSeqSpec('1');
-  void expandSelections(parsed.selections);
-  void findCheckpointSeqs(recallable);
-  void resolveRecallReference(recallable, 'seq', '1');
-  void recallSession(recallable, parsed.selections, { maxRecallTokens: 100 });
-  void searchSession(searchable, 'x', { maxRecallTokens: 100, maxSearchHits: 5 });
-  void [DEFAULT_MAX_RECALL_TOKENS, MAX_RECALL_SPAN, DEFAULT_MAX_SEARCH_HITS, MAX_LINES_PER_HIT, InvalidSearchPatternError];
+  void expandSelections(parsed.selections, signal);
+  void findCheckpointSeqs(recallable, signal);
+  void resolveRecallReference(recallable, 'seq', '1', signal);
+  void recallSession(recallable, parsed.selections, { maxRecallTokens: 100 }, signal);
+  void searchSession(searchable, 'x', { maxRecallTokens: 100, maxSearchHits: 5 }, signal);
+  void [DEFAULT_MAX_RECALL_TOKENS, MAX_RECALL_SPAN, MAX_RECALL_ENTRIES, COMPILER_MAX_RECALL_SPAN, DEFAULT_MAX_SEARCH_HITS, MAX_LINES_PER_HIT, InvalidSearchPatternError];
 
   const nodes = [{ seq: 1, message: null }];
   const compilerConfig = {
@@ -177,8 +181,21 @@ export function checkRc2Contracts(
     stripNoiseXml: false,
     noisePatterns: [],
   };
-  const compiled = compileNodes(nodes, compilerConfig);
-  void compileRegion(nodes, compilerConfig);
+  const ptcIndex: PtcDispatchIndex = {
+    byOuterCallId: new Map([['call-1', [{
+      startSeq: 2,
+      name: 'read',
+      arguments: { file_path: 'a.js' },
+      settleSeq: 3,
+      isError: false,
+    }]]]),
+    referencedSeqs: [2, 3],
+  };
+  const compiled = compileNodes(nodes, compilerConfig, undefined, ptcIndex);
+  void compileRegion(nodes, compilerConfig, ptcIndex);
+  const recovery: readonly SessionSeq[] | undefined = compiled.entries[0]?.recoverySeqs;
+  const region: CompiledRegion = null as unknown as CompiledRegion;
+  void [recovery, region.referencedSeqs];
   void frameCheckpoint(compiled.entries, 'header', 'intro', 'footer');
   void [tokenize('x'), isCjkChar('中'), estimateDeepSeekTokens('x'), countTokens('x'), estimateEntryTokens('x')];
   void [sanitize('x'), truncateTokens('x', 1), stripNoiseXml('x', []), oneLineArg('x')];

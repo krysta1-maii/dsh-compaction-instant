@@ -9,6 +9,82 @@ import { resolveRecallReference } from "../src/recall.js";
 import { compactSurfaceRegion } from "../src/region.js";
 import { defineRecallTool, resolveConfig } from "../src/tool.js";
 
+test("PTC dispatch history survives outer run_code pruning and compaction", async () => {
+  const session = Session.create("ptc-prune", []);
+  session.append("turn/start", { turn: 1 });
+  const user = session.append("user/message", createUserMessage({
+    content: [{ type: "text", text: "run the program" }], source: { kind: "user" }
+  }), { surfaceOp: "append" });
+  session.append("assistant/message", {
+    turn: 1, step: 1, stream: [], message: createAssistantMessage({
+      content: [{ type: "tool-call", id: "ptc-call", name: "run_code",
+        arguments: JSON.stringify({ code: "await tools.read({ file_path: 'a.js' })", description: "Inspect a.js" }) }],
+      source: { provider: "p", model: "m" }
+    })
+  }, { surfaceOp: "append" });
+  const dispatchData = {
+    rootCallId: "ptc-call",
+    parentCallId: "ptc-call",
+    subCallId: "ptc-call:ptc:1",
+    name: "read",
+    arguments: { file_path: "a.js" }
+  };
+  const start = session.append("tool/ptc-dispatch-start", dispatchData);
+  const settle = session.append("tool/ptc-dispatch", {
+    ...dispatchData,
+    isError: false,
+    content: [{ type: "text", text: "nested UNIQUE_DISPATCH" }]
+  });
+  const original = session.append("tool/result", {
+    message: createToolResultMessage({
+      callId: "ptc-call", isError: false,
+      content: [{ type: "text", text: "HEAD ".repeat(50) + "UNIQUE_OUTER" + " TAIL".repeat(50) }]
+    })
+  }, { surfaceOp: "append" });
+  const final = session.append("assistant/message", {
+    turn: 1, step: 2, stream: [], message: createAssistantMessage({
+      content: [{ type: "text", text: "done" }], source: { provider: "p", model: "m" }
+    })
+  }, { surfaceOp: "append" });
+  session.append("turn/end", { turn: 1 });
+  const makeCtx = () => {
+    const ctx = new Context();
+    ctx.provide("tokenMeter", {
+      measure: (target) => ({ nodes: target.surface.nodes.map((seq) => ({ seq, tokens: 100, heuristicTokens: 100 })) }),
+      estimateMessage: (message) => message.content.reduce((total, block) => total + Math.ceil((block.text?.length ?? 0) / 4), 0)
+    });
+    return ctx;
+  };
+  const first = new ToolResultPruner(makeCtx(), { thresholdChars: 200, headChars: 60, tailChars: 60 }).pruneSession(session).pruned[0];
+  const second = new ToolResultPruner(makeCtx(), { thresholdChars: 80, headChars: 10, tailChars: 10 }).pruneSession(session).pruned[0];
+  assert.ok(first !== undefined && second !== undefined);
+  const pointer = second.replacementSeq;
+  const engine = new InstantCompactionEngine(makeCtx(), {
+    auto: false,
+    textTokens: 32,
+    userTextTokens: 32,
+    toolCallTokens: 32
+  });
+  const compaction = await compactSurfaceRegion(engine.regionDependencies(), session, user.seq, final.seq, undefined, {
+    owner: null, stability: "selected-span"
+  }, undefined);
+  const checkpoint = session.eventAt(compaction.summarySeq + 1);
+  assert.ok(checkpoint.sourceEventSeqs.includes(start.seq));
+  assert.ok(checkpoint.sourceEventSeqs.includes(settle.seq));
+  assert.equal(compaction.shadowedSeqs.includes(start.seq), false);
+  assert.equal(compaction.shadowedSeqs.includes(settle.seq), false);
+  const text = checkpoint.data.content.map((block) => block.text).join("\n");
+  assert.match(text, new RegExp(`read "a\\.js" \\(seq ${start.seq} -> result ${settle.seq}\\)`));
+  const replayed = Session.create("ptc-prune-replay", JSON.parse(JSON.stringify(session.snapshotEvents())));
+  assert.deepEqual(resolveRecallReference(replayed, "result", String(pointer)).selections, [{ start: original.seq, end: original.seq }]);
+  assert.deepEqual(resolveRecallReference(replayed, "result", String(settle.seq)).selections, [{ start: settle.seq, end: settle.seq }]);
+  const tool = defineRecallTool(resolveConfig({}));
+  const outerValue = await tool.execute({ type: "result", id: String(pointer) }, { agent: { session: replayed } });
+  assert.match(outerValue.text, /UNIQUE_OUTER/);
+  const nestedValue = await tool.execute({ type: "result", id: String(settle.seq) }, { agent: { session: replayed } });
+  assert.match(nestedValue.text, /UNIQUE_DISPATCH/);
+});
+
 function makePrunedSession() {
   const session = Session.create("pruned-result-recall", []);
   session.append("turn/start", { turn: 1 });

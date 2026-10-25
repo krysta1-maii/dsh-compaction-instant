@@ -264,6 +264,37 @@ test("a flush failure reports persistence after a replayable committed replaceme
   assert.deepEqual(Session.create("flush-replay", events).surface.nodes, session.surface.nodes);
 });
 
+test("a custom compile hook may append referenced provenance", async () => {
+  const session = makeIdleSession();
+  const compile = async () => ({ ...(await fakeCompile()), referencedSeqs: [0] });
+  const result = await compactSurfaceRegion({ meter: makeFakeMeter(), compile }, session, 1, 4, undefined, {
+    owner: null,
+    stability: "selected-span"
+  }, undefined);
+  const checkpoint = session.eventAt(result.summarySeq + 1);
+  assert.deepEqual(checkpoint.sourceEventSeqs, [result.startSeq, result.summarySeq, 1, 2, 3, 4, 0]);
+});
+
+test("invalid custom referencedSeqs abort the commit without replacing the surface", async () => {
+  for (const referencedSeqs of [[1, 1], [999], [-1], [Number.MAX_SAFE_INTEGER + 1]]) {
+    const session = makeIdleSession();
+    const before = [...session.surface.nodes];
+    const compile = async () => ({ ...(await fakeCompile()), referencedSeqs });
+    await assert.rejects(
+      () => compactSurfaceRegion({ meter: makeFakeMeter(), compile }, session, 1, 4, undefined, {
+        owner: null,
+        stability: "selected-span"
+      }, undefined),
+      (error) => error instanceof ManualCompactionError && error.code === "commit"
+    );
+    const markers = session.snapshotEvents().filter((event) => event.type.startsWith("compaction/"));
+    assert.deepEqual(markers.map((event) => event.type), ["compaction/start", "compaction/summary", "compaction/end"]);
+    assert.ok(markers[2].data.error.length > 0);
+    assert.equal(session.snapshotEvents().some((event) => event.type === "user/message" && event.surfaceOp?.op === "replace"), false);
+    assert.deepEqual(session.surface.nodes, before);
+  }
+});
+
 test("compile failure closes exactly one error bracket without replacing history", async () => {
   const session = makeIdleSession();
   const failure = new Error("compiler failed");

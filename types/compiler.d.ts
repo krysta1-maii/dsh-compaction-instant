@@ -2,15 +2,37 @@
  * Deterministic VCC-style region compiler types (dependency-free module).
  * @module dsh-compaction-instant/compiler
  */
+import type { SessionSeq } from '@deepseek-ai/dsh-session';
 
 /** One projected surface node: the durable seq plus its derived message. */
 export interface CompileNode {
     seq: number;
     message: {
-        role: 'system' | 'user' | 'assistant';
+        role: 'system' | 'user' | 'assistant' | 'tool';
         content: readonly unknown[];
         source?: unknown;
+        /** Present on persisted tool-result messages. */
+        toolCallId?: string;
     } | null;
+}
+
+/**
+ * One paired nested PTC dispatch. A start-only record (outer result
+ * TOOL_OUTCOME_UNKNOWN) omits settleSeq and isError.
+ */
+export interface PtcDispatchPair {
+    startSeq: number;
+    name: string;
+    arguments: unknown;
+    settleSeq?: number;
+    isError?: boolean;
+}
+
+/** Index of the dispatch history inspected for selected outer run_code calls. */
+export interface PtcDispatchIndex {
+    byOuterCallId: ReadonlyMap<string, readonly PtcDispatchPair[]>;
+    /** Distinct start/settle seqs inspected, ascending; never surface-shadowed. */
+    referencedSeqs: readonly number[];
 }
 
 /** Per-block budgets applied by one compile pass. */
@@ -51,6 +73,8 @@ export interface CompileEntry {
     seq: number;
     text: string;
     kind: 'text' | 'reasoning' | 'tool' | 'result' | 'media' | 'note' | 'checkpoint';
+    /** Durable seqs a cap-elision marker must keep reachable; defaults to [seq]. */
+    recoverySeqs?: readonly SessionSeq[];
 }
 
 export interface CompileStats {
@@ -101,8 +125,8 @@ export declare function projectToolResultText(blocks: readonly unknown[]): strin
 export declare function isCheckpointSource(source: unknown): boolean;
 export declare function excerptToolResult(text: string, budget: number, ref: string): string;
 export declare function entryText(entry: string | CompileEntry): string;
-export declare function compileNodes(nodes: readonly CompileNode[], config: CompilerConfig, budgets?: CompileBudgets): { entries: CompileEntry[]; stats: CompileStats };
-export declare function compileRegion(nodes: readonly CompileNode[], config: CompilerConfig): { entries: CompileEntry[]; stats: CompileStats; capped: boolean };
+export declare function compileNodes(nodes: readonly CompileNode[], config: CompilerConfig, budgets?: CompileBudgets, ptcIndex?: PtcDispatchIndex): { entries: CompileEntry[]; stats: CompileStats };
+export declare function compileRegion(nodes: readonly CompileNode[], config: CompilerConfig, ptcIndex?: PtcDispatchIndex): { entries: CompileEntry[]; stats: CompileStats; capped: boolean };
 export declare function frameCheckpoint(entries: readonly (string | CompileEntry)[], headerLine?: string, introLine?: string, footerLine?: string): { type: 'text'; text: string }[];
 export declare const CHECKPOINT_PREAMBLE: string;
 export declare const CHECKPOINT_OPEN_TAG: string;
