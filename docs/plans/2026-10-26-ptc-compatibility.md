@@ -3,8 +3,9 @@
 - 日期：2026-10-26
 - 状态：待实施
 - 插件基线：dsh-compaction-instant 0.2.1，提交 a602a8b
-- 主要开发基线：DSH 0.2.0-rc.2，提交 639ed015397290b3745d163aafe02ffee4aa3f84
-- 当前核对基线：DSH 0.2.1-rc.3，提交 1f81c047fc48fa190a683e469daa699857e9afe8
+- 主要开发基线：DSH 0.2.1-rc.3，提交 1f81c047fc48fa190a683e469daa699857e9afe8
+- 兼容回归基线：DSH 0.2.0-rc.1（4878cdabd87d4041bdaff61d04c966883b9fd07a）与 0.2.0-rc.2（639ed015397290b3745d163aafe02ffee4aa3f84）
+- 变更点核对基线：DSH 0.2.1-alpha.5，提交 1517a4dbca0a2789ff1d41ba439600f8547d23fa
 - 计划范围：插件仓库内的实现、测试、文档和真实组合验证；不修改上游 DSH
 
 ## 1. 背景
@@ -40,7 +41,7 @@
 3. recall(type:"result") 能恢复 tool/ptc-dispatch 的参数与结算内容，且不会把它误当作官方 pruner 的 surface 替换节点。
 4. PTC 程序可以用结构化 hits/entries/seqs 直接完成 search → recall，无需解析 Native 文本。
 5. 文档准确区分 durable event content、spill 前的 canonical value 和同一 run_code 内的日志延迟可见性。
-6. rc2 默认测试、rc3 当前运行时复核和真实 PTC 组合测试都有明确覆盖；不再仅凭依赖范围宣称兼容。
+6. rc3 默认开发与真实 PTC 组合测试、0.2.0 兼容回归都有明确覆盖；不再仅凭依赖范围宣称兼容。
 7. 现有 native 压缩、官方 pruner provenance、surface replay、设置页和 bundle 激活方式保持可用。
 
 ## 3. 非目标与约束
@@ -52,7 +53,7 @@
 - 不实现持久 PTC REPL 状态序列化。persistent-in-memory 的进程状态重启后仍按宿主规则处理；本计划只保证声明代码仍可通过外层 seq 找回。
 - 不实现通用的 spill 自动解引用。当前 SpillStore 只有 saveText，没有通用 read/search API，SpillLocator 也是不应解析的不透明句柄。
 - 不通过 sleep、固定重试次数或猜测 seq 来掩盖同一 run_code 内的日志提交窗口。
-- 不引入新的运行时依赖，不扩大 engines/peer 版本范围，不升级项目锁定的 DSH 开发图。
+- 不引入新的运行时依赖，不扩大 engines/peer 版本范围，也不以兼容回归为由收窄这些声明。
 - 不改动后台任务、子代理 Session、命令 source kind 或 deprecated Session API 的迁移；这些分别跟踪，不与本次 PTC 修复混合。
 
 必须保持的兼容性约束：
@@ -82,17 +83,22 @@
 
 ## 5. 分阶段实施
 
-### 阶段 0：先建立 PTC 测试夹具
+### 阶段 0：升级默认开发图并建立 PTC 测试夹具
+
+先把默认开发图统一到当前主基线，再建立测试：
+
+1. 将 package.json 中 DSH 相关 devDependencies 统一固定为 0.2.1-rc.3，@deepseek-ai/cordis 固定为 4.0.5，并重新生成 package-lock.json。engines 与 peerDependencies 保持现有 0.2.0/0.2.1 支持范围，不新增运行时依赖。
+2. 用 npm ci 安装并验证该默认图；后续默认测试、类型检查、打包和真实组合均在 rc3 上运行。0.2.0 与 alpha.5 只通过隔离安装图验证，不用它们拉低或锁定默认开发图。
 
 新增 test/ptc.test.js，复用审查探针的结构，而不是只用 session-shaped mock：
 
-1. 使用真实 Context、SystemPrompt、ToolRuntime(mode:"ptc")、Session 和插件工具定义。
-2. 使用可编程 FakeRuntime 驱动 request.bindings，覆盖 nested 调用、canonical value、dispatch start/settle、logWork drain 和取消。
-3. 提供 makePtcSession、setupPtc、runCode、readDispatch 等局部 helper；helper 只服务该测试文件，不新建通用测试框架。
-4. 默认测试不依赖真实模型、网络、GUI、凭据或宿主 profile。
-5. 先加入两个基线测试：当前 nested dispatch 不进入 deriveMessages；外层 run_code/result pairing 与 replay 保持不变。后续修复不得通过破坏这两条来“通过”。
+3. 使用真实 Context、SystemPrompt、ToolRuntime(mode:"ptc")、Session 和插件工具定义。
+4. 使用可编程 FakeRuntime 驱动 request.bindings，覆盖 nested 调用、canonical value、dispatch start/settle、logWork drain 和取消。
+5. 提供 makePtcSession、setupPtc、runCode、readDispatch 等局部 helper；helper 只服务该测试文件，不新建通用测试框架。
+6. 默认测试不依赖真实模型、网络、GUI、凭据或宿主 profile。
+7. 先加入两个基线测试：当前 nested dispatch 不进入 deriveMessages；外层 run_code/result pairing 与 replay 保持不变。后续修复不得通过破坏这两条来“通过”。
 
-完成标准：测试能在默认 rc2 开发图运行，并能在隔离的 rc3 安装图复用。
+完成标准：测试能在默认 rc3 开发图运行，并能在隔离的 rc2 兼容安装图复用。
 
 ### 阶段 1：消除 seq 稳定性问题并补协作式取消
 
@@ -237,7 +243,7 @@ return { hit, restoredSeqs: restored.seqs };
 
 ### 阶段 5：真实组合、版本矩阵与发布材料
 
-默认验证：
+默认验证（全部在阶段 0 建立的 rc3 默认开发图上执行）：
 
 1. npm test
 2. npm run check
@@ -248,10 +254,10 @@ return { hit, restoredSeqs: restored.seqs };
 
 | DSH 版本 | 验证重点 |
 |---|---|
-| 0.2.0-rc.1（4878cdabd87d4041bdaff61d04c966883b9fd07a） | 最低支持范围的 defineTool、native/ptc/both、surface、dispatch result 引用和 replay |
-| 0.2.0-rc.2 | 完整默认测试、类型检查、包检查、真实 PTC bridge、既有 error 字段 |
-| 0.2.1-alpha.5 | workingDirectory 要求、meta 新增（error 在 rc2 已有）、both 移除、retained runtime 与代码恢复入口 |
-| 0.2.1-rc.3 | 当前运行时、spill-policy、真实 preset-ptc 组合和重放 |
+| 0.2.0-rc.1（4878cdabd87d4041bdaff61d04c966883b9fd07a） | 最低支持范围的兼容回归：defineTool、native/ptc/both、surface、dispatch result 引用和 replay |
+| 0.2.0-rc.2 | 兼容回归：完整测试、类型检查、包检查、真实 PTC bridge、既有 error 字段 |
+| 0.2.1-alpha.5 | 变更点验证：workingDirectory 要求、meta 新增（error 在 rc2 已有）、both 移除、retained runtime 与代码恢复入口 |
+| 0.2.1-rc.3 | 主要开发与真实组合：当前运行时、spill-policy、真实 preset-ptc 组合和重放 |
 
 矩阵每一行都覆盖额外非 surface sourceEventSeqs 的 replay/fork，以及同一 run_code 内 canonical value 与 dispatch append 的可见窗口；不能只在 rc.3 验证这两项。rc.1 只有在实际执行后才能写入动态验证结果。
 
@@ -288,7 +294,8 @@ return { hit, restoredSeqs: restored.seqs };
 | test/engine.test.js、test/region.test.js | referencedSeqs、sourceEventSeqs、shadow 不变和失败括号 |
 | test/pruner.test.js | 外层 run_code pruner 与 nested dispatch 的边界 |
 | test/types/compat.ts | 新公共类型和向后兼容的可选参数 |
-| package.json | check:syntax 增加 src/ptc.js；不新增依赖、exports 或版本范围 |
+| package.json | devDependencies 的 DSH 包固定为 0.2.1-rc.3、Cordis 固定为 4.0.5；check:syntax 增加 src/ptc.js；engines、peerDependencies 和 exports 不变 |
+| package-lock.json | 随默认开发图更新到 rc3；兼容回归安装图单独生成，不写回该锁文件 |
 | README.md、README.zh-CN.md | PTC 激活、dispatch 恢复、spill 和日志时序限制 |
 | CHANGELOG.md | 实施验证完成后的实际变更记录 |
 | scripts/check-package.mjs | 仅在打包检查需要显式覆盖新 PTC 场景时调整；现有测试发现机制优先复用 |
@@ -318,21 +325,22 @@ return { hit, restoredSeqs: restored.seqs };
 | sourceEventSeqs 增加影响消费者与元数据规模 | 与 shadowedSeqs 分离，升序去重，运行大 fanout、replay/fork/UI/查询及非法引用测试 | 不按文本 cap 截断 provenance；append 失败只保留错误括号，不提交 checkpoint |
 | canonical 字段增加内存占用 | 文本沿用 maxRecallTokens，条目数量受 MAX_RECALL_ENTRIES 限制，Native render 不重复输出 | 可减少 hits/entries 中的展示副本，但 seq/kind 等结构化标识必须保留 |
 | 自定义 compile hook 被破坏 | referencedSeqs 与 PTC 参数均可选，缺省为空 | 旧 hook 无 PTC 行仍按原路径编译 |
-| 不同 DSH 版本行为漂移 | rc1/rc2/alpha5/rc3 隔离验证，不升级默认 lock | 收窄文档中的兼容声明，不用依赖范围掩盖失败 |
+| 不同 DSH 版本行为漂移 | 默认开发图固定 rc3，rc1/rc2/alpha5 使用隔离安装图验证 | 收窄文档中的兼容声明，不用依赖范围掩盖失败 |
 | 协作式取消无法中断单个正则 | 明确保证粒度，不宣称硬 deadline | 后续另评正则执行隔离，不与本次修复混合 |
 
 ## 9. 建议实施提交顺序
 
-1. test: add PTC bridge fixtures and unsafe-seq regressions
-2. fix: validate recall selections and observe cancellation
-3. feat: compile and recall PTC dispatch history
-4. feat: expose structured recall and search results
-5. docs: clarify spill and PTC log visibility
-6. test: verify PTC presets across supported DSH versions
-7. docs: record verified compatibility and changelog
+1. chore: update the development baseline to DSH 0.2.1-rc.3
+2. test: add PTC bridge fixtures and unsafe-seq regressions
+3. fix: validate recall selections and observe cancellation
+4. feat: compile and recall PTC dispatch history
+5. feat: expose structured recall and search results
+6. docs: clarify spill and PTC log visibility
+7. test: verify PTC presets across supported DSH versions
+8. docs: record verified compatibility and changelog
 
 每个实现提交只在自己的文件范围内工作，并在下一阶段开始前运行对应聚焦测试。最终发布提交必须位于真实组合与版本矩阵完成之后。
 
 ## 10. 本计划自身不包含的内容
 
-本次计划文档提交不实现上述代码，不提升版本号，不更新兼容性声明为“已支持 PTC”，也不宣称真实 GUI/模型/profile 已验证。它只固定问题、设计决定、实施顺序和验收标准，供后续实现与审查使用。
+本次计划文档修改不实现上述代码，不提升插件版本号，也不直接修改 devDependencies/package-lock.json；默认开发图只在实施阶段 0 按本文升级。文档不把兼容性声明扩大为“所有版本均已验证”，也不宣称真实 GUI/模型/profile 已验证。它只固定问题、设计决定、实施顺序和验收标准，供后续实现与审查使用。
