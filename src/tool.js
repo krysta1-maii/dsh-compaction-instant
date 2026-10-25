@@ -49,7 +49,21 @@ const RECALL_OUTPUT = {
       missing: { type: "integer", required: true },
       skipped: { type: "integer", required: true },
       truncated: { type: "boolean", required: true },
-      tokens: { type: "integer", required: true }
+      tokens: { type: "integer", required: true },
+      entries: {
+        type: "array",
+        required: true,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            seq: { type: "integer", required: true },
+            text: { type: "string", required: true },
+            truncated: { type: "boolean" }
+          }
+        }
+      },
+      seqs: { type: "array", required: true, items: { type: "integer" } }
     }
   },
   render: (_args, value) => [{ type: "text", text: value.text }]
@@ -65,7 +79,20 @@ const SEARCH_OUTPUT = {
       totalMatches: { type: "integer", required: true },
       omitted: { type: "integer", required: true },
       truncated: { type: "boolean", required: true },
-      tokens: { type: "integer", required: true }
+      tokens: { type: "integer", required: true },
+      hits: {
+        type: "array",
+        required: true,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            seq: { type: "integer", required: true },
+            kind: { type: "string", required: true },
+            text: { type: "string", required: true }
+          }
+        }
+      }
     }
   },
   render: (_args, value) => [{ type: "text", text: value.text }]
@@ -84,7 +111,9 @@ function executeRecall(exec, type, id, resolved) {
     missing: recalled.missing,
     skipped: recalled.skipped,
     truncated: recalled.truncated,
-    tokens: recalled.tokens
+    tokens: recalled.tokens,
+    entries: recalled.entries,
+    seqs: recalled.seqs
   };
 }
 
@@ -154,7 +183,8 @@ export function defineSearchTool(resolved) {
         totalMatches: result.totalMatches,
         omitted: result.omitted,
         truncated: result.truncated,
-        tokens: result.tokens
+        tokens: result.tokens,
+        hits: result.hits
       };
     },
     presentCall: (args) => ({

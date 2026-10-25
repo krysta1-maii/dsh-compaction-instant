@@ -310,8 +310,16 @@ test("recall tool executes with type seq against the calling agent's session", a
   assert.equal(value.recalled, 2);
   assert.equal(value.missing, 0);
   assert.match(value.text, /please fix the bug/);
+  assert.deepEqual(value.seqs, [1, 2]);
+  assert.deepEqual(value.entries.map((entry) => entry.seq), [1, 2]);
+  assert.match(value.entries[0].text, /please fix the bug/);
   const blocks = tool.output.render({ type: "seq", id: "1-2" }, value);
   assert.deepEqual(blocks, [{ type: "text", text: value.text }]);
+  assert.equal(tool.output.schema.properties.entries.type, "array");
+  assert.equal(tool.output.schema.properties.entries.items.properties.seq.type, "integer");
+  assert.equal(tool.output.schema.properties.entries.items.properties.text.type, "string");
+  assert.equal(tool.output.schema.properties.entries.items.additionalProperties, false);
+  assert.equal(tool.output.schema.properties.seqs.items.type, "integer");
 });
 
 test("recall tool rejects missing agents and invalid references", async () => {
@@ -397,14 +405,37 @@ test("search tool searches the session and points at recall", async () => {
   assert.equal(value.totalMatches, 2);
   assert.equal(value.pattern, "counter");
   assert.match(value.text, /\[seq 2: assistant\]/);
+  assert.deepEqual(value.hits.map((hit) => hit.seq), [2, 3]);
+  assert.deepEqual(value.hits.map((hit) => hit.kind), ["assistant", "tool"]);
+  assert.match(value.hits[0].text, /the counter overflows here/);
   const blocks = tool.output.render({ pattern: "counter" }, value);
   assert.deepEqual(blocks, [{ type: "text", text: value.text }]);
+  assert.equal(tool.output.schema.properties.hits.type, "array");
+  assert.deepEqual(
+    Object.keys(tool.output.schema.properties.hits.items.properties).sort(),
+    ["kind", "seq", "text"]
+  );
+  assert.equal(tool.output.schema.properties.hits.items.additionalProperties, false);
 });
 
 test("search tool rejects missing agents and invalid patterns", async () => {
   const tool = defineSearchTool(resolveToolConfig({}));
   await assert.rejects(() => tool.execute({ pattern: "x" }, {}), (error) => error.code === "RECALL_AGENT_REQUIRED");
   await assert.rejects(() => tool.execute({ pattern: "(unclosed" }, { agent: { session: makeIdleSession() } }), (error) => error.code === "SEARCH_INVALID_PATTERN");
+});
+
+test("recall tool returns bounded canonical entries and seqs for missing-heavy input", async () => {
+  const session = makeIdleSession();
+  const tool = defineRecallTool(resolveToolConfig({ maxRecallTokens: DEFAULT_MAX_RECALL_TOKENS }));
+  const missingIds = Array.from({ length: MAX_RECALL_ENTRIES }, (_, index) => String(10_000 + index)).join(",");
+  const value = await tool.execute({ type: "seq", id: missingIds }, { agent: { session } });
+  assert.equal(value.missing, MAX_RECALL_ENTRIES);
+  assert.equal(value.entries.length, MAX_RECALL_ENTRIES);
+  assert.deepEqual(value.seqs, []);
+  await assert.rejects(
+    () => tool.execute({ type: "seq", id: `${missingIds},20000` }, { agent: { session } }),
+    (error) => error.code === "RECALL_INVALID_SELECTION"
+  );
 });
 
 test("recall tools config validates the budget and hit cap", () => {

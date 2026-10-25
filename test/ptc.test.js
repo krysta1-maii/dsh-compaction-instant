@@ -544,6 +544,74 @@ test("elision markers still recover native results and nested settles", async ()
   }
 });
 
+test("a PTC program completes search -> recall through structured fields", async () => {
+  const setup = await recordNestedRead();
+  const { ctx, session, runtime } = setup;
+  try {
+    session.append("turn/start", { turn: 2 });
+    session.append("user/message", createUserMessage({
+      content: [{ type: "text", text: "find the nested result" }],
+      source: { kind: "user" }
+    }), { surfaceOp: "append" });
+    const code = [
+      "const found = await tools.search({ pattern: 'contents of a[.]js' });",
+      "const hit = found.hits.find((candidate) => candidate.kind === 'tool/ptc-dispatch');",
+      "if (!hit) throw new Error('missing nested dispatch');",
+      "const restored = await tools.recall({ type: 'seq', id: String(hit.seq) });",
+      "return { hit, restoredSeqs: restored.seqs, restoredEntrySeqs: restored.entries.map((entry) => entry.seq) };"
+    ].join("\n");
+    session.append("assistant/message", {
+      turn: 2,
+      step: 1,
+      stream: [],
+      message: createAssistantMessage({
+        content: [{
+          type: "tool-call",
+          id: "call-2",
+          name: RUN_CODE_NAME,
+          arguments: JSON.stringify({ code, description: "Find nested result" })
+        }],
+        source: { provider: "p", model: "m" }
+      })
+    }, { surfaceOp: "append" });
+    runtime.behavior = async (request) => {
+      const [binding] = request.bindings;
+      const found = await binding.functions.search({ pattern: "contents of a[.]js" });
+      if (!Array.isArray(found.hits)) throw new Error("search hits missing from canonical value");
+      const hit = found.hits.find((candidate) => candidate.kind === "tool/ptc-dispatch");
+      if (hit === undefined) throw new Error("missing nested dispatch");
+      const restored = await binding.functions.recall({ type: "seq", id: String(hit.seq) });
+      return {
+        logs: [],
+        value: {
+          hit,
+          restoredSeqs: restored.seqs,
+          restoredEntrySeqs: restored.entries.map((entry) => entry.seq)
+        }
+      };
+    };
+    const executed = await runCode(ctx, session, code, { callId: "call-2", description: "Find nested result" });
+    assert.equal(executed.isError, false, executed.error?.message);
+    const programResult = executed.value.result;
+    assert.equal(programResult.hit.kind, "tool/ptc-dispatch");
+    assert.match(programResult.hit.text, /contents of a\.js/);
+    assert.deepEqual(programResult.restoredSeqs, [programResult.hit.seq]);
+    assert.deepEqual(programResult.restoredEntrySeqs, [programResult.hit.seq]);
+    assert.doesNotMatch(code, /\.text\.match|JSON\.parse\(restored/);
+    session.append("tool/result", {
+      message: createToolResultMessage({
+        callId: "call-2",
+        content: executed.content,
+        isError: executed.isError
+      })
+    }, { surfaceOp: "append" });
+    session.append("turn/end", { turn: 2 });
+    assert.deepEqual(session.deriveMessages().slice(-2).map((message) => message.role), ["assistant", "tool"]);
+  } finally {
+    await ctx.fiber.dispose();
+  }
+});
+
 test("corrupt dispatch pairing aborts compaction inside an error bracket", async () => {
   const orphan = makeDispatch(1);
   const { session, user, result } = makePtcHistory({ dispatches: [orphan.settle] });
