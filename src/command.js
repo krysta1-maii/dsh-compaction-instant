@@ -35,7 +35,7 @@ async function executeRecall(invocation, resolved) {
   };
   let result;
   try {
-    result = searchSession(invocation.agent.session, pattern, resolved);
+    result = searchSession(invocation.agent.session, pattern, resolved, invocation.signal);
   } catch (error) {
     if (error instanceof InvalidSearchPatternError) return {
       kind: "error",

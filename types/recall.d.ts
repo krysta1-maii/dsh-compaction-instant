@@ -8,6 +8,8 @@ import type { Session } from '@deepseek-ai/dsh-session';
 export declare const DEFAULT_MAX_RECALL_TOKENS: number;
 /** Widest single range accepted from one selection. */
 export declare const MAX_RECALL_SPAN: number;
+/** Widest declared width of one whole selection, duplicates and missing seqs included. */
+export declare const MAX_RECALL_ENTRIES: number;
 
 /** One inclusive seq range parsed from a selection string. */
 export interface SeqSelection {
@@ -50,10 +52,10 @@ export declare function parseSeqSpec(input: string): { selections: SeqSelection[
 /** Project one derived message into full plain text (nothing elided but media). */
 export declare function projectMessageText(message: { role: string; content: readonly unknown[] }): string;
 /** Expand ordered selections into a deduplicated ordered seq list. */
-export declare function expandSelections(selections: readonly SeqSelection[]): number[];
+export declare function expandSelections(selections: readonly SeqSelection[], signal?: AbortSignal): number[];
 /** Collect the seqs of every landed checkpoint node, oldest first (1 = oldest compaction). */
-export declare function findCheckpointSeqs(session: RecallableSession): number[];
-/** Resolve a typed reference into seq ranges; `result` follows official prune provenance to the original result, while `seq` reads the addressed event verbatim. */
-export declare function resolveRecallReference(session: RecallableSession, type: 'seq' | 'result' | 'checkpoint' | string, id: string): { selections: SeqSelection[]; errors: string[] };
+export declare function findCheckpointSeqs(session: RecallableSession, signal?: AbortSignal): number[];
+/** Resolve a typed reference into seq ranges; `result` follows official prune provenance to the original result, or reads a settled PTC dispatch, while `seq` reads the addressed event verbatim. */
+export declare function resolveRecallReference(session: RecallableSession, type: 'seq' | 'result' | 'checkpoint' | string, id: string, signal?: AbortSignal): { selections: SeqSelection[]; errors: string[] };
 /** Recall the full original content of the requested seqs from one session log. */
-export declare function recallSession(session: RecallableSession, selections: readonly SeqSelection[], config: { maxRecallTokens: number }): RecallResult;
+export declare function recallSession(session: RecallableSession, selections: readonly SeqSelection[], config: { maxRecallTokens: number }, signal?: AbortSignal): RecallResult;

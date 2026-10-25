@@ -46,4 +46,4 @@ export type SearchableSession = Pick<Session, 'snapshotEvents' | 'deriveEventMes
 /** Compile one search pattern (case-insensitive, Unicode-aware regex). */
 export declare function compileSearchPattern(source: unknown): RegExp;
 /** Search the durable log; returns matching events with their seq pointers. */
-export declare function searchSession(session: SearchableSession, patternSource: string, config: { maxRecallTokens: number; maxSearchHits: number }): SearchResult;
+export declare function searchSession(session: SearchableSession, patternSource: string, config: { maxRecallTokens: number; maxSearchHits: number }, signal?: AbortSignal): SearchResult;

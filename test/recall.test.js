@@ -13,7 +13,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { createAssistantMessage, createToolResultMessage, createUserMessage } from "@deepseek-ai/dsh-llm";
 import { Session } from "@deepseek-ai/dsh-session";
 import { apply as applyCommand, defineRecallCommand, resolveConfig as resolveCommandConfig } from "../src/command.js";
-import { DEFAULT_MAX_RECALL_TOKENS, findCheckpointSeqs, parseSeqSpec, projectMessageText, recallSession, resolveRecallReference } from "../src/recall.js";
+import { DEFAULT_MAX_RECALL_TOKENS, MAX_RECALL_ENTRIES, MAX_RECALL_SPAN, expandSelections, findCheckpointSeqs, parseSeqSpec, projectMessageText, recallSession, resolveRecallReference } from "../src/recall.js";
 import { compileSearchPattern, InvalidSearchPatternError, searchSession } from "../src/search.js";
 import { apply as applyTool, defineRecallTool, defineSearchTool, resolveConfig as resolveToolConfig } from "../src/tool.js";
 import { InstantCompactionEngine } from "../src/index.js";
@@ -77,6 +77,112 @@ test("parseSeqSpec rejects malformed, reversed, and over-wide selections", () =>
   assert.ok(parseSeqSpec("7-3").errors.length > 0);
   assert.ok(parseSeqSpec("1,xyz,2").errors.length === 1);
   assert.ok(parseSeqSpec("1-2000").errors.length > 0);
+});
+
+test("parseSeqSpec rejects unsafe, huge, and over-budget numeric selections", () => {
+  const rejected = [
+    "9007199254740992", // 2^53
+    "9007199254740993", // 2^53 + 1
+    "1-9007199254740993",
+    "9".repeat(400),
+    `0-${"9".repeat(30)}`
+  ];
+  for (const input of rejected) {
+    const parsed = parseSeqSpec(input);
+    assert.deepEqual(parsed.selections, [], input);
+    assert.ok(parsed.errors.length > 0, input);
+  }
+  // The largest safe integer is a valid single-point reference even when the
+  // session has no such event; the recall layer reports it as missing later.
+  assert.deepEqual(parseSeqSpec(String(Number.MAX_SAFE_INTEGER)).selections, [{ start: Number.MAX_SAFE_INTEGER, end: Number.MAX_SAFE_INTEGER }]);
+  assert.deepEqual(parseSeqSpec("0").selections, [{ start: 0, end: 0 }]);
+  // Declared width counts duplicate ranges and is bounded before expansion.
+  assert.deepEqual(parseSeqSpec("1-500,1-500").selections, [{ start: 1, end: 500 }, { start: 1, end: 500 }]);
+  const over = parseSeqSpec("1-600,1-600");
+  assert.deepEqual(over.selections, []);
+  assert.match(over.errors[0], new RegExp(`${MAX_RECALL_ENTRIES}-entry limit`));
+  const boundary = parseSeqSpec(`${1}-${MAX_RECALL_ENTRIES}`);
+  assert.deepEqual(boundary.errors, []);
+  assert.equal(boundary.selections[0].end - boundary.selections[0].start + 1, MAX_RECALL_ENTRIES);
+});
+
+test("expandSelections revalidates direct callers and bounds declared width", () => {
+  assert.throws(() => expandSelections([{ start: 2 ** 53, end: 2 ** 53 }]), /safe integers/);
+  assert.throws(() => expandSelections([{ start: Number.NaN, end: 1 }]), /safe integers/);
+  assert.throws(() => expandSelections([{ start: 3, end: 2 }]), /start <= end/);
+  assert.throws(() => expandSelections([{ start: 0, end: MAX_RECALL_SPAN }]), /wider than/);
+  assert.throws(() => expandSelections([{ start: 0, end: MAX_RECALL_ENTRIES - 1 }, { start: 0, end: 0 }]), new RegExp(`${MAX_RECALL_ENTRIES}-entry limit`));
+  assert.deepEqual(expandSelections([{ start: 0, end: 0 }, { start: 0, end: 1 }]), [0, 1]);
+  const reason = new Error("stop expansion");
+  assert.throws(() => expandSelections([{ start: 0, end: 10 }], AbortSignal.abort(reason)), (error) => error === reason);
+});
+
+test("recall entry limit bounds missing-heavy and duplicate selections", async () => {
+  const session = makeIdleSession();
+  const missingIds = Array.from({ length: MAX_RECALL_ENTRIES }, (_, index) => String(10_000 + index)).join(",");
+  const result = recallSession(session, parseSeqSpec(missingIds).selections, { maxRecallTokens: DEFAULT_MAX_RECALL_TOKENS });
+  assert.equal(result.missing, MAX_RECALL_ENTRIES);
+  assert.equal(result.entries.length, MAX_RECALL_ENTRIES);
+  assert.equal(result.recalled, 0);
+  const over = parseSeqSpec(`${missingIds},20000`);
+  assert.deepEqual(over.selections, []);
+  assert.match(over.errors[0], new RegExp(`${MAX_RECALL_ENTRIES}-entry limit`));
+  const tool = defineRecallTool(resolveToolConfig({}));
+  await assert.rejects(() => tool.execute({ type: "seq", id: "9007199254740992" }, { agent: { session } }), (error) => error.code === "RECALL_INVALID_SELECTION");
+  await assert.rejects(() => tool.execute({ type: "result", id: "9007199254740993" }, { agent: { session } }), (error) => error.code === "RECALL_INVALID_SELECTION");
+  await assert.rejects(() => tool.execute({ type: "checkpoint", id: "seq 9007199254740992" }, { agent: { session } }), (error) => error.code === "RECALL_INVALID_SELECTION");
+  await assert.rejects(() => tool.execute({ type: "checkpoint", id: "9007199254740993" }, { agent: { session } }), (error) => error.code === "RECALL_INVALID_SELECTION");
+});
+
+test("recall and search observe cancellation at their event boundaries", () => {
+  const session = makeIdleSession();
+  const preReason = new Error("already cancelled");
+  assert.throws(() => recallSession(session, [{ start: 1, end: 1 }], { maxRecallTokens: 100 }, AbortSignal.abort(preReason)), (error) => error === preReason);
+  assert.throws(() => searchSession(session, "counter", SEARCH_CONFIG, AbortSignal.abort(preReason)), (error) => error === preReason);
+  assert.throws(() => findCheckpointSeqs(session, AbortSignal.abort(preReason)), (error) => error === preReason);
+  assert.throws(() => resolveRecallReference(session, "seq", "1", AbortSignal.abort(preReason)), (error) => error === preReason);
+
+  const recallReason = new Error("stop recall");
+  const recallController = new AbortController();
+  let reads = 0;
+  const recallGuarded = {
+    snapshotEvents: () => session.snapshotEvents(),
+    deriveEventMessage: (event) => session.deriveEventMessage(event),
+    eventAt: (seq) => {
+      reads += 1;
+      if (reads === 2) recallController.abort(recallReason);
+      return session.eventAt(seq);
+    }
+  };
+  assert.throws(() => recallSession(recallGuarded, [{ start: 1, end: 4 }], { maxRecallTokens: 100 }, recallController.signal), (error) => error === recallReason);
+
+  const searchReason = new Error("stop search");
+  const searchController = new AbortController();
+  const events = session.snapshotEvents();
+  let derived = 0;
+  const searchGuarded = {
+    snapshotEvents: () => events,
+    deriveEventMessage: (event) => {
+      derived += 1;
+      if (derived === 1) searchController.abort(searchReason);
+      return session.deriveEventMessage(event);
+    }
+  };
+  assert.throws(() => searchSession(searchGuarded, "e", SEARCH_CONFIG, searchController.signal), (error) => error === searchReason);
+});
+
+test("recall and search tools forward the execution signal", async () => {
+  const session = makeIdleSession();
+  const reason = new Error("tool cancelled");
+  const signal = AbortSignal.abort(reason);
+  await assert.rejects(
+    () => defineRecallTool(resolveToolConfig({})).execute({ type: "seq", id: "1" }, { agent: { session }, signal }),
+    (error) => error === reason
+  );
+  await assert.rejects(
+    () => defineSearchTool(resolveToolConfig({})).execute({ pattern: "counter" }, { agent: { session }, signal }),
+    (error) => error === reason
+  );
 });
 
 // ── recallSession ───────────────────────────────────────────────────────────

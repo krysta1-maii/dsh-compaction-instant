@@ -75,9 +75,9 @@ const SEARCH_OUTPUT = {
 function executeRecall(exec, type, id, resolved) {
   const agent = exec.agent;
   if (agent === undefined) throw new HarnessError("recall requires a calling agent with a session", "RECALL_AGENT_REQUIRED");
-  const { selections, errors } = resolveRecallReference(agent.session, type, id);
+  const { selections, errors } = resolveRecallReference(agent.session, type, id, exec.signal);
   if (errors.length > 0) throw new HarnessError(`invalid ${type} recall: ${errors.join("; ")}`, "RECALL_INVALID_SELECTION");
-  const recalled = recallSession(agent.session, selections, resolved);
+  const recalled = recallSession(agent.session, selections, resolved, exec.signal);
   return {
     text: recalled.text,
     recalled: recalled.recalled,
@@ -143,7 +143,7 @@ export function defineSearchTool(resolved) {
       if (agent === undefined) throw new HarnessError("search requires a calling agent with a session", "RECALL_AGENT_REQUIRED");
       let result;
       try {
-        result = searchSession(agent.session, args.pattern, resolved);
+        result = searchSession(agent.session, args.pattern, resolved, exec.signal);
       } catch (error) {
         if (error instanceof InvalidSearchPatternError) throw new HarnessError(error.message, "SEARCH_INVALID_PATTERN", { cause: error });
         throw error;

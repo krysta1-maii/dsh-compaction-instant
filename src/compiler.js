@@ -25,6 +25,16 @@
  * @module dsh-compaction-instant/compiler
  */
 
+/**
+ * Protocol-level cap on the declared width of one recall selection, including
+ * duplicate ranges and missing seqs. Kept here (rather than recall.js) so the
+ * compiler can chunk recovery markers without importing the recall module.
+ */
+export const MAX_RECALL_ENTRIES = 1000;
+
+/** Widest single range accepted by one recall selection. */
+export const MAX_RECALL_SPAN = 1000;
+
 // ── tokenizer (VCC `_tokenize` / `_TOK_RE`) ────────────────────────────────
 
 const TOKEN_RE = /[a-zA-Z]+|[0-9]+|[^\sa-zA-Z0-9]|\s+/g;
@@ -722,22 +732,42 @@ function scaleBudgets(budgets, factor) {
 }
 
 /**
- * Render exact seqs in first-appearance order, not a numeric surface interval.
- * Only actual +1 runs become ranges; split at recall.js MAX_RECALL_SPAN (1000)
- * without importing recall.js, which itself depends on this standalone module.
- * Work and output depend on unique dropped seqs, never on sparse seq gaps.
+ * Render exact recovery seqs as one or more independently recallable
+ * selections, in first-appearance order, never as a numeric surface interval.
+ * Only actual +1 runs become ranges. Each returned selection's declared width
+ * (duplicates already deduped) stays within MAX_RECALL_ENTRIES, and no single
+ * range exceeds MAX_RECALL_SPAN (1000 — recall.js's per-range limit, kept
+ * local to avoid a circular import). Work and output depend on unique seqs,
+ * never on sparse seq gaps.
+ * @param dropped - entries whose recovery pointers must remain reachable.
+ * @returns ordered selection strings, each accepted by parseSeqSpec.
  */
-function seqSelectionOf(dropped) {
-  const seqs = [...new Set(dropped.map((entry) => entry.seq))];
-  const parts = [];
+function seqSelectionsOf(dropped) {
+  const seqs = [...new Set(dropped.flatMap((entry) => entry.recoverySeqs ?? [entry.seq]))];
+  const chunks = [];
+  let parts = [];
+  let width = 0;
   for (let index = 0; index < seqs.length;) {
     const first = seqs[index];
     let end = index;
-    while (end + 1 < seqs.length && end - index + 1 < 1000 && seqs[end + 1] === seqs[end] + 1) end += 1;
+    while (
+      end + 1 < seqs.length
+      && end - index + 1 < MAX_RECALL_SPAN
+      && width + (end - index + 2) <= MAX_RECALL_ENTRIES
+      && seqs[end + 1] === seqs[end] + 1
+    ) end += 1;
+    const runWidth = end - index + 1;
     parts.push(end === index ? String(first) : `${first}-${seqs[end]}`);
+    width += runWidth;
     index = end + 1;
+    if (width >= MAX_RECALL_ENTRIES) {
+      chunks.push(`${parts.length === 1 && runWidth === 1 ? "seq" : "seqs"} ${parts.join(",")}`);
+      parts = [];
+      width = 0;
+    }
   }
-  return `${seqs.length === 1 ? "seq" : "seqs"} ${parts.join(",")}`;
+  if (parts.length > 0) chunks.push(`${parts.length === 1 && width === 1 ? "seq" : "seqs"} ${parts.join(",")}`);
+  return chunks;
 }
 
 /**
@@ -791,10 +821,12 @@ export function compileRegion(nodes, config) {
     if (toolRows.length > 0) {
       capped = true;
       result.stats.elidedToolRows += toolRows.length;
-      const marker = { seq: toolRows[0].seq, text: `[${toolRows.length} tool/result entries elided: ${seqSelectionOf(toolRows)}]`, kind: "note" };
-      markers.push(marker);
-      markerTokens += estimateEntryTokens(marker.text);
-      result.stats.tokens += estimateEntryTokens(marker.text);
+      for (const selection of seqSelectionsOf(toolRows)) {
+        const marker = { seq: toolRows[0].seq, text: `[${toolRows.length} tool/result entries elided: ${selection}]`, kind: "note" };
+        markers.push(marker);
+        markerTokens += estimateEntryTokens(marker.text);
+        result.stats.tokens += estimateEntryTokens(marker.text);
+      }
     }
     const elided = [];
     const droppedCheckpoints = [];
@@ -809,17 +841,24 @@ export function compileRegion(nodes, config) {
       result.stats.elidedRows += elided.length;
       // Dropped prior checkpoints never vanish silently: each leaves a
       // single `[checkpoint N]` line the agent can restore in full via
-      // recall(type:"checkpoint", id:"N").
-      const markerLines = [`[${elided.length} earlier entries elided: ${seqSelectionOf(elided)}]`];
+      // recall(type:"checkpoint", id:"N"). A selection wider than one recall
+      // request is split into multiple independent marker lines.
+      const checkpointLines = [];
       for (const dropped of droppedCheckpoints) {
         const ordinal = config.checkpointOrdinals?.get(dropped.seq);
         const ref = ordinal === undefined ? `@ seq ${dropped.seq}` : String(ordinal);
-        markerLines.push(`[checkpoint ${ref}]`);
+        checkpointLines.push(`[checkpoint ${ref}]`);
       }
-      const marker = { seq: elided[0].seq, text: markerLines.join("\n"), kind: "note" };
-      markers.unshift(marker);
-      markerTokens += estimateEntryTokens(marker.text);
-      result.stats.tokens += estimateEntryTokens(marker.text);
+      const markerEntries = seqSelectionsOf(elided).map((selection, index) => ({
+        seq: elided[0].seq,
+        text: [`[${elided.length} earlier entries elided: ${selection}]`, ...index === 0 ? checkpointLines : []].join("\n"),
+        kind: "note"
+      }));
+      markers.unshift(...markerEntries);
+      for (const marker of markerEntries) {
+        markerTokens += estimateEntryTokens(marker.text);
+        result.stats.tokens += estimateEntryTokens(marker.text);
+      }
     }
     if (result.stats.tokens > config.maxTokens && entries.length === 1) {
       capped = true;

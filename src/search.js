@@ -51,7 +51,8 @@ export function compileSearchPattern(source) {
 }
 
 /** One search hit: the durable seq, its kind, and the rendered matched lines. */
-export function searchSession(session, patternSource, config) {
+export function searchSession(session, patternSource, config, signal) {
+  signal?.throwIfAborted();
   const pattern = compileSearchPattern(patternSource);
   const maxHits = config.maxSearchHits;
   const maxTokens = config.maxRecallTokens;
@@ -61,6 +62,7 @@ export function searchSession(session, patternSource, config) {
   let budget = maxTokens;
   let truncated = false;
   for (const event of events) {
+    signal?.throwIfAborted();
     const seq = event.seq;
     const message = typeof session.deriveEventMessage === "function" ? session.deriveEventMessage(event) : null;
     const body = message !== null

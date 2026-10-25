@@ -14,19 +14,25 @@
  *
  * @module dsh-compaction-instant/recall
  */
-import { estimateEntryTokens, isCheckpointSource, sanitize, truncateTokens } from "./compiler.js";
+import { MAX_RECALL_ENTRIES, MAX_RECALL_SPAN, estimateEntryTokens, isCheckpointSource, sanitize, truncateTokens } from "./compiler.js";
+export { MAX_RECALL_ENTRIES, MAX_RECALL_SPAN };
 
 /** Default total budget for one recall operation, in density-aware tokens. */
 export const DEFAULT_MAX_RECALL_TOKENS = 16000;
-/** Widest single range accepted from one selection, bounding expansion work. */
-export const MAX_RECALL_SPAN = 1000;
+
+/** Cooperative cancellation boundary: an absent signal is a no-op. */
+function throwIfAborted(signal) {
+  signal?.throwIfAborted();
+}
 
 /**
  * Parse one seq selection string into ordered inclusive ranges.
  *
  * Accepted forms per comma-separated part: `12`, `3-7`, `seq 12`,
  * `seqs 3-7`, with optional surrounding parentheses — so a model or human
- * can paste a checkpoint marker verbatim.
+ * can paste a checkpoint marker verbatim. Every numeric value must be a
+ * non-negative safe integer, and the declared width of all parts together
+ * (duplicates included) must stay within {@link MAX_RECALL_ENTRIES}.
  * @param input - raw selection text.
  * @returns `{ selections, errors }`; errors are stable human-readable strings.
  */
@@ -35,6 +41,7 @@ export function parseSeqSpec(input) {
   const errors = [];
   const raw = String(input ?? "").trim();
   if (raw.length === 0) return { selections, errors: ["missing seq selection"] };
+  let declaredWidth = 0;
   for (const part of raw.split(",")) {
     let token = part.trim();
     if (token.length === 0) continue;
@@ -46,13 +53,22 @@ export function parseSeqSpec(input) {
     }
     const start = Number(match[1]);
     const end = match[2] === undefined ? start : Number(match[2]);
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) {
+      errors.push(`invalid seq selection "${part}" (seq values must be safe integers)`);
+      continue;
+    }
     if (end < start) {
       errors.push(`invalid seq range "${part}" (end before start)`);
       continue;
     }
-    if (end - start + 1 > MAX_RECALL_SPAN) {
+    const width = end - start + 1;
+    if (width > MAX_RECALL_SPAN) {
       errors.push(`seq range "${part}" is wider than the ${MAX_RECALL_SPAN}-seq limit`);
       continue;
+    }
+    declaredWidth += width;
+    if (declaredWidth > MAX_RECALL_ENTRIES) {
+      return { selections: [], errors: [`seq selection is wider than the ${MAX_RECALL_ENTRIES}-entry limit`] };
     }
     selections.push({ start, end });
   }
@@ -104,13 +120,28 @@ export function projectMessageText(message) {
 
 /**
  * Expand ordered selections into a deduplicated ordered seq list.
+ * Defensively revalidates every range (direct callers can bypass
+ * {@link parseSeqSpec}) and enforces the same declared-width limit.
  * @param selections - parsed inclusive ranges.
+ * @param signal - optional cooperative cancellation signal.
  * @returns unique seqs in first-appearance order.
  */
-export function expandSelections(selections) {
+export function expandSelections(selections, signal) {
+  throwIfAborted(signal);
+  let declaredWidth = 0;
+  for (const { start, end } of selections) {
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start) {
+      throw new Error(`invalid seq selection ${String(start)}-${String(end)}: expected non-negative safe integers with start <= end`);
+    }
+    const width = end - start + 1;
+    if (width > MAX_RECALL_SPAN) throw new Error(`seq range ${start}-${end} is wider than the ${MAX_RECALL_SPAN}-seq limit`);
+    declaredWidth += width;
+    if (declaredWidth > MAX_RECALL_ENTRIES) throw new Error(`seq selection is wider than the ${MAX_RECALL_ENTRIES}-entry limit`);
+  }
   const seqs = [];
   const seen = new Set();
   for (const { start, end } of selections) {
+    throwIfAborted(signal);
     for (let seq = start; seq <= end; seq += 1) {
       if (seen.has(seq)) continue;
       seen.add(seq);
@@ -125,11 +156,13 @@ export function expandSelections(selections) {
  * session, oldest first. Each compaction replaces its span with exactly one
  * checkpoint node, so the ordinal (`1` = oldest) counts compactions.
  * @param session - session-shaped value exposing the immutable DSH log API.
+ * @param signal - optional cooperative cancellation signal.
  * @returns checkpoint node seqs in chronological order.
  */
-export function findCheckpointSeqs(session) {
+export function findCheckpointSeqs(session, signal) {
   const seqs = [];
   for (const event of session.snapshotEvents()) {
+    throwIfAborted(signal);
     if (event.type === "user/message" && isCheckpointSource(event.data?.source)) seqs.push(event.seq);
   }
   return seqs;
@@ -141,9 +174,10 @@ export function findCheckpointSeqs(session) {
  * must name an earlier result with the same message and call identities, so
  * repeated pruning can be unwound without rewriting history or following cycles.
  */
-function resolveResultSource(session, event) {
+function resolveResultSource(session, event, signal) {
   let current = event;
   while (true) {
+    throwIfAborted(signal);
     const operation = current.surfaceOp;
     const prune = session.eventAt(current.seq - 1);
     if (operation?.op !== "replace" || prune?.type !== "compaction/prune") break;
@@ -183,9 +217,11 @@ function resolveResultSource(session, event) {
  * @param session - session-shaped value exposing immutable log access and message projection.
  * @param type - reference type: `seq`, `result`, or `checkpoint`.
  * @param id - type-dependent reference text.
+ * @param signal - optional cooperative cancellation signal.
  * @returns `{ selections, errors }`; errors are stable human-readable strings.
  */
-export function resolveRecallReference(session, type, id) {
+export function resolveRecallReference(session, type, id, signal) {
+  throwIfAborted(signal);
   const raw = String(id ?? "").trim();
   if (type === "seq") return parseSeqSpec(raw);
   if (type === "result") {
@@ -193,16 +229,21 @@ export function resolveRecallReference(session, type, id) {
     const match = /^(\d+)$/u.exec(token);
     if (match === null) return { selections: [], errors: [`invalid result reference "${id}" (expected a seq like "3" or "result 3")`] };
     const seq = Number(match[1]);
+    if (!Number.isSafeInteger(seq)) return { selections: [], errors: [`invalid result reference "${id}" (seq must be a safe integer)`] };
     const event = session.eventAt(seq);
     if (event === undefined) return { selections: [], errors: [`result seq ${seq} not found in this session`] };
+    // A settled PTC dispatch is its own durable result event. Unlike official
+    // pruner replacements it has no surfaceOp/provenance edge to follow.
+    if (event.type === "tool/ptc-dispatch") return { selections: [{ start: seq, end: seq }], errors: [] };
     if (event.type !== "tool/result") return { selections: [], errors: [`seq ${seq} is not a tool result (it is ${event.type})`] };
-    return resolveResultSource(session, event);
+    return resolveResultSource(session, event, signal);
   }
   if (type === "checkpoint") {
     const token = raw.replace(/^\((.*)\)$/u, "$1").trim();
     const bySeq = /^seqs?\s+(\d+)$/iu.exec(token);
     if (bySeq !== null) {
       const seq = Number(bySeq[1]);
+      if (!Number.isSafeInteger(seq)) return { selections: [], errors: [`invalid checkpoint seq reference "${id}"`] };
       const event = session.eventAt(seq);
       if (event === undefined) return { selections: [], errors: [`checkpoint seq ${seq} not found in this session`] };
       if (!isCheckpointSource(event.data?.source)) return { selections: [], errors: [`seq ${seq} is not a checkpoint node`] };
@@ -213,7 +254,7 @@ export function resolveRecallReference(session, type, id) {
     if (match === null) return { selections: [], errors: [`invalid checkpoint reference "${id}" (expected an ordinal like "1" or "checkpoint 1", or a "seq N" pointer)`] };
     const index = Number(match[1]);
     if (!Number.isSafeInteger(index) || index < 1) return { selections: [], errors: [`invalid checkpoint ordinal "${id}"`] };
-    const checkpointSeqs = findCheckpointSeqs(session);
+    const checkpointSeqs = findCheckpointSeqs(session, signal);
     const seq = checkpointSeqs[index - 1];
     if (seq === undefined) return { selections: [], errors: [`checkpoint ${index} not found (this session has ${checkpointSeqs.length} checkpoint(s))`] };
     return { selections: [{ start: seq, end: seq }], errors: [] };
@@ -230,11 +271,13 @@ export function resolveRecallReference(session, type, id) {
  * @param session - session-shaped value exposing immutable log access and message projection.
  * @param selections - parsed inclusive ranges.
  * @param config - `{ maxRecallTokens }`.
+ * @param signal - optional cooperative cancellation signal.
  * @returns `{ text, entries, seqs, recalled, missing, skipped, truncated, tokens }`.
  */
-export function recallSession(session, selections, config) {
+export function recallSession(session, selections, config, signal) {
+  throwIfAborted(signal);
   const maxRecallTokens = config.maxRecallTokens;
-  const requested = expandSelections(selections);
+  const requested = expandSelections(selections, signal);
   const entries = [];
   const seqs = [];
   let budget = maxRecallTokens;
@@ -242,6 +285,7 @@ export function recallSession(session, selections, config) {
   let missing = 0;
   let skipped = 0;
   for (let index = 0; index < requested.length; index += 1) {
+    throwIfAborted(signal);
     const seq = requested[index];
     if (budget <= 0) {
       skipped = requested.length - index;

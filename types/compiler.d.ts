@@ -78,6 +78,10 @@ export declare const DEFAULT_TOOL_KEY_FIELDS: Readonly<Record<string, string>>;
 export declare const DEFAULT_ARG_TOOLS: readonly string[];
 /** Build marker proving which compiler revision produced a debug log. */
 export declare const COMPILER_REV: string;
+/** Protocol-level cap on the declared width of one recall selection. */
+export declare const MAX_RECALL_ENTRIES: number;
+/** Widest single range accepted by one recall selection. */
+export declare const MAX_RECALL_SPAN: number;
 /** Join entries: single newlines between consecutive tool rows, blank lines elsewhere. */
 export declare function joinCompiledEntries(entries: readonly (string | { seq: number; text: string; kind?: string })[]): string;
 

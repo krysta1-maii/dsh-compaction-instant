@@ -26,7 +26,7 @@ import {
   tokenize,
   truncateTokens
 } from "../src/compiler.js";
-import { MAX_RECALL_SPAN, expandSelections, parseSeqSpec } from "../src/recall.js";
+import { MAX_RECALL_ENTRIES, MAX_RECALL_SPAN, expandSelections, parseSeqSpec } from "../src/recall.js";
 
 const CONFIG = {
   maxTokens: 8192,
@@ -304,21 +304,32 @@ test("compileRegion cap markers round-trip exact ordered seqs through recall", a
       const config = { ...CONFIG, maxTokens: 96, checkpointOrdinals: new Map([[100, 1]]) };
       const { entries, stats, capped } = compileRegion(nodes, config);
       assert.ok(capped && stats.elidedRows > 0, "cap drops actual entries");
-      const marker = entries[0].text.match(/\[\d+ earlier entries elided: (seqs? [^\]]+)\]/);
-      assert.ok(marker, "actual output includes a complete selection");
-      const parsed = parseSeqSpec(marker[1]);
-      assert.deepEqual(parsed.errors, [], marker[1]);
+      const markerSelections = entries
+        .filter((entry) => entry.kind === "note")
+        .flatMap((entry) => [...entry.text.matchAll(/\[\d+ earlier entries elided: (seqs? [^\]]+)\]/g)].map((match) => match[1]));
+      assert.ok(markerSelections.length > 0, "actual output includes a complete selection");
+      const parsedSelections = [];
+      const recovered = [];
+      for (const selection of markerSelections) {
+        const parsed = parseSeqSpec(selection);
+        assert.deepEqual(parsed.errors, [], selection);
+        const declaredWidth = parsed.selections.reduce((sum, { start, end }) => sum + end - start + 1, 0);
+        assert.ok(declaredWidth <= MAX_RECALL_ENTRIES, `chunk ${selection} stays within the entry limit`);
+        parsedSelections.push(...parsed.selections);
+        recovered.push(...expandSelections(parsed.selections));
+      }
       const dropped = compileNodes(nodes, config).entries.slice(0, stats.elidedRows);
       const expected = [...new Set(dropped.map((entry) => entry.seq))];
-      assert.deepEqual(expandSelections(parsed.selections), expected, "covers every dropped seq, no invented interval or duplicates");
-      assert.ok(parsed.selections.every(({ start, end }) => end >= start && end - start + 1 <= MAX_RECALL_SPAN));
+      assert.deepEqual([...new Set(recovered)], expected, "the union of independent markers covers every dropped seq, no invented interval or duplicates");
+      assert.ok(parsedSelections.every(({ start, end }) => end >= start && end - start + 1 <= MAX_RECALL_SPAN));
       if (fixture.checkpoint) assert.match(entries[0].text, /\[checkpoint 1\]/);
       if (fixture.blocks > 1) assert.ok(dropped.length > expected.length, "exercises repeated seq entries");
       if (fixture.seqs.length > MAX_RECALL_SPAN) {
         assert.ok(expected.length > MAX_RECALL_SPAN, "dropped selection spans more than one legal range");
-        assert.ok(marker[1].length < 80, "dense runs stay compact");
+        assert.ok(markerSelections.length > 1, "over-wide selections are split into independently recallable markers");
+        assert.ok(markerSelections.every((selection) => selection.length < 80), "dense runs stay compact");
       }
-      assert.ok(stats.tokens <= config.maxTokens + 64, `tokens ${stats.tokens} retain only bounded marker/floor overhead`);
+      assert.ok(stats.tokens <= config.maxTokens + 64 * markerSelections.length + 64, `tokens ${stats.tokens} retain only bounded marker/floor overhead`);
     });
   }
 });
