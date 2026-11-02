@@ -15,14 +15,14 @@
 
 | dsh-compaction-instant | DeepSeek Harness | Node.js |
 |---|---|---|
-| `0.4.0` | `0.2.1-rc.5`（本版本重新验证） | `>=22.12.0` |
+| `0.4.1` | `0.2.1-rc.5`（本版本重新验证） | `>=22.12.0` |
 | `0.3.0` | `0.2.0-rc.1`, `0.2.0-rc.2`, `0.2.1-alpha.5`, `0.2.1-rc.3`, `0.2.1-rc.5` | `>=22.12.0` |
 | `0.2.0`, `0.2.1` | `0.2.0-rc.1`, `0.2.0-rc.2` | `>=22.12.0` |
 | `0.1.8` | `0.1.7` | `>=22.12.0` |
 | `0.1.7` | `0.1.7` | `>=22.12.0` |
 | `0.1.6` | `0.1.5-rc.1` | `>=22.12.0` |
 
-0.4.0 以 **DSH 0.2.1-rc.5**（commit **b830ec950faba0a46dda564be3e2d854afed94f1**）为开发基线，peer/运行时范围保持 `^0.2.0-rc.1 || ^0.2.1-0`。开发锁定图为 0.2.1-rc.5、Cordis 4.0.5、Schemastery 3.18.5。**本版本**的兼容回归只在 rc.5 图上执行：200 项 checkout 测试、语法/严格声明检查、隔离 tarball 检查（192 项产物测试）。更早的 0.3.0 曾在 **0.2.0-rc.1**（`4878cdabd87d4041bdaff61d04c966883b9fd07a`）、**0.2.0-rc.2**（`639ed015397290b3745d163aafe02ffee4aa3f84`）、**0.2.1-alpha.5**（`1517a4dbca0a2789ff1d41ba439600f8547d23fa`）、**0.2.1-rc.3** 与 **0.2.1-rc.5** 上验证；这些旧图没有为 0.4.0 重跑，所以保持不变的 peer 范围不构成 0.4.0 的验证声明。它仍跟随 0.1.7 消息模型——工具结果是一等 `role: "tool"` 消息，`toolCallId` 提升为顶层字段，不再包在 user 角色块里——并使用 `compact-checkpoint` 检查点源标记；旧宿主写入的检查点（`kind: "plugin", plugin: "compact"`）在持久日志中仍会被识别。检查点替换仍是 `surfaceOp: { op: "replace", startSeq, endSeq }`，不支持旧替换字段 `start` / `end`；固定迁移目标也不代表对所有未来版本的兼容承诺。
+0.4.1 以 **DSH 0.2.1-rc.5**（commit **b830ec950faba0a46dda564be3e2d854afed94f1**）为开发基线，peer/运行时范围保持 `^0.2.0-rc.1 || ^0.2.1-0`。开发锁定图为 0.2.1-rc.5、Cordis 4.0.5、Schemastery 3.18.5。**本版本**的兼容回归只在 rc.5 图上执行：201 项 checkout 测试、语法/严格声明检查、隔离 tarball 检查（193 项产物测试）。更早的 0.3.0 曾在 **0.2.0-rc.1**（`4878cdabd87d4041bdaff61d04c966883b9fd07a`）、**0.2.0-rc.2**（`639ed015397290b3745d163aafe02ffee4aa3f84`）、**0.2.1-alpha.5**（`1517a4dbca0a2789ff1d41ba439600f8547d23fa`）、**0.2.1-rc.3** 与 **0.2.1-rc.5** 上验证；这些旧图没有为 0.4.1 重跑，所以保持不变的 peer 范围不构成 0.4.1 的验证声明。它仍跟随 0.1.7 消息模型——工具结果是一等 `role: "tool"` 消息，`toolCallId` 提升为顶层字段，不再包在 user 角色块里——并使用 `compact-checkpoint` 检查点源标记；旧宿主写入的检查点（`kind: "plugin", plugin: "compact"`）在持久日志中仍会被识别。检查点替换仍是 `surfaceOp: { op: "replace", startSeq, endSeq }`，不支持旧替换字段 `start` / `end`；固定迁移目标也不代表对所有未来版本的兼容承诺。
 
 surface 第 0 个节点若是 `system/message`，系统头会留在压缩范围之外；自动选区从其后的 surface 节点开始，显式替换范围也不能包含系统头。Instant 保留策略不变：`retainTurns` 是偏好，`retainTokens`（或 `retainRatio` 换算预算）是上限，最近回合超限时保留能装下的后缀。工具配对保护可能将后缀扩展到超过上限；受保护的系统头单独保留。目标版本 basic 则按**最近尾部最低预算**选区，不是 instant 的整回合/上限策略，不能假定配置或行为完全等价。
 
@@ -198,7 +198,7 @@ Harness 自带的 token 计量器与 compiler 估算器彼此独立。DSH 0.1.7 
 用 Harness 插件管理器安装到实际宿主使用的 profile。仅当该版本已发布时使用 npm 版本；否则使用下文重新打包的本地 tarball：
 
 ```bash
-dsh plugin --profile web add dsh-compaction-instant@0.4.0
+dsh plugin --profile web add dsh-compaction-instant@0.4.1
 ```
 
 DSH Desktop 对应版本请将 `--profile web` 换为 `--profile desktop`。先启动一次 Desktop 初始化 profile，再完全退出后执行 CLI 包操作，完成后重新打开；中断活跃会话前必须先征得用户确认。
@@ -246,7 +246,7 @@ DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` �
 # 在本插件源码目录重新生成包产物。
 npm pack
 # 将这个新产物安装到实际宿主 profile，使用它的绝对路径。
-dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.4.0.tgz
+dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.4.1.tgz
 ```
 
 执行这些部署步骤前，先向用户确认目标 profile、安装包名（直接安装还是别名）、当前解析路径/版本和目标预设。若已有旧别名部署，应明确规划替换/移除，避免留下两套可能的引擎解析路径。安装后检查新产物及自定义预设实际解析结果。**宿主重载/重启必须先经用户确认**，因为可能中断活跃会话。重载宿主以重新加载包代码和启动元数据，然后刷新 Web 页面，在原宿主 URL 和新会话上验证；profile patch 热重载或仅刷新页面，都不能证明已加载模块换成了新代码。以上是操作步骤，不代表本版本已经部署。
@@ -268,12 +268,12 @@ npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注
 
 本包只有两个直接运行时依赖：`@deepseek-ai/schemastery` 用于配置 schema（包括两个 volatile 设置表单），`@deepseek-ai/dsh-util-values` 提供共享不可变值工具。其余 Harness 组件仍是 peer；测试使用锁定的 0.2.1-rc.5 开发依赖，其中 `@deepseek-ai/dsh-scope` 用于控制器测试构造真实 Agent scope。`src/compiler.js` 仍保持零依赖。
 
-0.4.0 在 0.3.0 的验证范围（替换字段与旧形状拒绝、系统头保护、显式范围、保留策略/工具配对、持久重放/来源记录、recall/search 文件引用、tool 角色消息投影、两代检查点标记、非安全 seq 拒绝、recall 条目上限与取消、PTC dispatch 编译与结果回读、结构化 search/recall 值、spill preview 与 dispatch 时序、设置桥接 schema 与设置平面的跟随/回退、根模块分发、安装产物导出/浏览器注册）之上，新增预设控制器与双区域页面：
+0.4.1 在 0.3.0 的验证范围（替换字段与旧形状拒绝、系统头保护、显式范围、保留策略/工具配对、持久重放/来源记录、recall/search 文件引用、tool 角色消息投影、两代检查点标记、非安全 seq 拒绝、recall 条目上限与取消、PTC dispatch 编译与结果回读、结构化 search/recall 值、spill preview 与 dispatch 时序、设置桥接 schema 与设置平面的跟随/回退、根模块分发、安装产物导出/浏览器注册）之上，新增预设控制器与双区域页面：
 
 - Host：默认空列表、对已存在 Agent 的启用与禁用、启动协调、未来 Agent、事件负载与实际预设不一致时的切换、重复事件与无关设置写入下的幂等、注册中途失败的精确回滚、Agent 销毁、控制器卸载、未知与空 id、仍在激活中的 scope 延迟注册，以及真实 PTC `run_code` 程序通过 Agent scope 的 SDK 完成 search → recall。
-- Client：清单的挂载读取、刷新、读取失败、已离开清单的旧 id、缺少 Remote；草稿暂存、排序后的原子保存、重置、只读行为、两个命名空间互不干扰，以及上传命名空间缺失时只隐藏对应区域。
+- Client：清单的挂载读取、刷新、读取失败、已离开清单的旧 id、缺少 Remote；草稿暂存、排序后的原子保存、重置、只读行为、两个命名空间互不干扰，以及预设命名空间缺失时只隐藏对应区域，和系统预设名称回退。
 
-在 Linux、Node 24.22.1 上实测：rc.5 开发图通过全部 200 项检出测试、语法/类型检查与隔离 tarball 检查（192 项安装产物测试）。运行中宿主重启、真实 GUI 验证、部署、真实 `preset-ptc` 组合与真实模型请求本次未执行；更早的隔离图没有为 0.4.0 重跑。上方压缩率表是历史测量，不是本版本重新运行的结果。
+在 Linux、Node 24.22.1 上实测：rc.5 开发图通过全部 201 项检出测试、语法/类型检查与隔离 tarball 检查（193 项安装产物测试）。随后把包 link 进本机 Web profile 并在重启后的宿主上验证：Agent 工具表包含 `recall` 与 `search`，两项工具均实际执行；插件页清单加载并成功保存。GUI 内切换预设、真实 `preset-ptc` 组合与更早的隔离图本次未重跑。上方压缩率表是历史测量，不是本版本重新运行的结果。
 
 ## 和官方引擎的区别
 
@@ -285,4 +285,4 @@ npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注
 - `compaction/summary` 事件携带**压缩后的条目本身**——UI 里可展开的检查点行显示的就是模型实际看到的内容，外面包一层**能自动变长的代码框**（框线永远比内容里的 ``` 长，所以含 markdown 的消息也能整齐地显示成一个代码块），检查点开头还有一段简短的使用指南，告诉模型怎么用 `recall` / `search` 找回被省略的内容。
 - 权衡：对以长对话、叙述为主的历史，检查点的信息密度可能不如 LLM 摘要（长句是截断而不是合并）。正在进行的对话有逐字保留的尾部（`retainTurns`/`retainTokens`）兜底，其余持久事件内容都能通过 `(seq N)` 指针 + recall 找回；被 spill 替换为 preview 的 PTC dispatch 记录例外。
 
-代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 引入本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；0.4.0 继续保留该图标与导出，并在 tool、command、settings 之外新增 `preset-tools` 图标子路径。配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。
+代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 引入本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；0.4.1 继续保留该图标与导出，并在 tool、command、settings 之外新增 `preset-tools` 图标子路径。配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。

@@ -1,6 +1,6 @@
 {
   "name": "dsh-compaction-instant",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "icon": "./assets/icon.svg",
   "description": "VCC-style instant, near-lossless deterministic compaction backend for DeepSeek Harness 0.2.0",
   "type": "module",

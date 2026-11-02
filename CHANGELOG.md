@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.1 — 2026-11-03
+
+### Fixes from the first live deployment
+
+- **Host registration moved into a command-injected child fiber.** Cordis resolves a service through the fiber that declares it, so an Agent scope whose surrounding composition injects only `tools` rejects `agent.ctx.commands` with "cannot get property \"commands\" without inject". The controller now mounts one child fiber of the Agent scope with `inject: ["tools", "commands"]` and registers all three companions there; the scope tag keeps the effects in the Agent's own layer and releasing the fiber removes them together. Before the fix every registration rolled back silently after the tools step, which is why no target preset received the tools.
+- **The roster namespace is injected, not read through a proxy.** The browser module now resolves `remote.agentPresets` through a child fiber that injects `remote` and `remote.agentPresets` (with a direct-read fallback and a mounted-state retry). The previous access went through `ctx.get("remote")` and a property read, which the same guard rejects, so `refresh()` threw before the roster load and the section rendered only the saved ids.
+- The controller tests now build their Agent scopes from an owner that injects only `tools`, matching `dsh-agent-loop`; that fixture condition reproduces the live failure instead of hiding it.
+- The roster now shows the four shipped presets with their localized names (标准模式 / PTC 模式 / 极简模式 / 创造模式, or Standard / PTC / Minimal / Creator mode) instead of the bare ids. A shipped preset publishes no `name`, so the id fallback made them read like technical tokens; a declaration that publishes its own name keeps that name.
+
+### Verification
+
+- Verified on Linux / Node **24.22.1**: `npm ls --all`, syntax and strict declaration checks, all **201** checkout tests, and the isolated rc.5 tarball package check with **193** artifact tests (`dsh-compaction-instant-0.4.1.tgz`). The 200-test checkout suite was previously cross-checked on **24.19.0**.
+- Live deployment on the same Linux host: the package was linked into the Web profile, the host was restarted, and a real PTC session whose Agent scope listed `recall` and `search` executed both tools (`recall` read a checkpoint, `search` returned structured hits). The Plugins page roster loaded and saved the enabled set; the four shipped presets render their localized names (pinned by the client tests, served through client HMR). Preset switching through the GUI and a re-run of the older 0.2.0-rc.1 / 0.2.0-rc.2 / 0.2.1-alpha.5 / 0.2.1-rc.3 graphs remain unverified. The peer range is unchanged; 0.4.1 re-verifies rc.5 only.
+
 ## 0.4.0 — 2026-11-02
 
 ### Preset-scoped recall companions
@@ -15,13 +29,6 @@
 - Adds `@deepseek-ai/dsh-scope` as a pinned development dependency, because the controller tests drive a real scoped context. No runtime dependency is added.
 - Documents the semantics precisely: the preset is the controller's filter, the contribution lives in the Agent scope, and an in-flight call is never cancelled by a disable.
 
-### Fixes from the first live deployment
-
-- **Host registration moved into a command-injected child fiber.** Cordis resolves a service through the fiber that declares it, so an Agent scope whose surrounding composition injects only `tools` rejects `agent.ctx.commands` with "cannot get property \"commands\" without inject". The controller now mounts one child fiber of the Agent scope with `inject: ["tools", "commands"]` and registers all three companions there; the scope tag keeps the effects in the Agent's own layer and releasing the fiber removes them together. Before the fix every registration rolled back silently after the tools step, which is why no target preset received the tools.
-- **The roster namespace is injected, not read through a proxy.** The browser module now resolves `remote.agentPresets` through a child fiber that injects `remote` and `remote.agentPresets` (with a direct-read fallback and a mounted-state retry). The previous access went through `ctx.get("remote")` and a property read, which the same guard rejects, so `refresh()` threw before the roster load and the section rendered only the saved ids.
-- The controller tests now build their Agent scopes from an owner that injects only `tools`, matching `dsh-agent-loop`; that fixture condition reproduces the live failure instead of hiding it.
-- The roster now shows the four shipped presets with their localized names (标准模式 / PTC 模式 / 极简模式 / 创造模式, or Standard / PTC / Minimal / Creator mode) instead of the bare ids. A shipped preset publishes no `name`, so the id fallback made them read like technical tokens; a declaration that publishes its own name keeps that name.
-
 ### Development baseline
 
 - Moves the default development graph from DSH **0.2.1-rc.3** to **0.2.1-rc.5** (commit **b830ec950faba0a46dda564be3e2d854afed94f1**). Peer ranges and `engines.dsh` remain unchanged. The rc.3 → rc.5 source audit found no changes to the Host APIs used by this package.
@@ -29,7 +36,7 @@
 ### Verification
 
 - Verified on Linux / Node **24.22.1** (`npm ls --all`, syntax and strict declaration checks, all **200** checkout tests, and the isolated rc.5 tarball package check with **192** artifact tests) with a **24.19.0** cross-check of the same checkout suite (200/200).
-- Live deployment on the same Linux host: the package was linked into the Web profile, the host was restarted, and a real PTC session whose Agent scope listed `recall` and `search` executed both tools (`recall` read a checkpoint, `search` returned structured hits). The browser-side panel interaction, a preset switch through the GUI, and a re-run of the older 0.2.0-rc.1 / 0.2.0-rc.2 / 0.2.1-alpha.5 / 0.2.1-rc.3 graphs remain unverified. The peer range is unchanged, but 0.4.0 verified rc.5 only.
+- 0.4.0 was deployed to a live profile and superseded by **0.4.1** after that deployment surfaced the registration failure; see 0.4.1 for the fix and the live verification. A preset switch through the GUI and a re-run of the older 0.2.0-rc.1 / 0.2.0-rc.2 / 0.2.1-alpha.5 / 0.2.1-rc.3 graphs were not performed for 0.4.0. The peer range is unchanged, but 0.4.0 verified rc.5 only.
 
 ## 0.3.0 — 2026-10-26
 

@@ -1,8 +1,8 @@
-# dsh-compaction-instant 0.4.0 bundle layer for DSH 0.2.x.
+# dsh-compaction-instant 0.4.1 bundle layer for DSH 0.2.x.
 # Verified target for this release: 0.2.1-rc.5
 # (b830ec950faba0a46dda564be3e2d854afed94f1). Earlier 0.3.0 targets were
 # verified for that release only; this release re-verifies rc.5 alone, so do
-# not read the peer range as a 0.4.0 compatibility claim.
+# not read the peer range as a 0.4.1 compatibility claim.
 #
 # Companion rows only: loading this bundle does NOT activate the engine.
 # Override the preset's isolated compaction group in the profile patch so its
