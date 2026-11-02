@@ -128,7 +128,7 @@ The bundle also installs an inert **client-carrier row** (`compaction-instant-cl
 
 #### Recall-companion section
 
-Below the engine fields, the same page carries the companion section, served by the bundle's **preset controller row** (`dsh-compaction-instant/preset-tools`, composition id and settings namespace `compaction-instant-preset-tools`). It lists the live preset roster from `remote.agentPresets.list()` and stores the enabled set as one volatile `presets` array whose default is **empty**:
+Below the engine fields, the same page carries the companion section, served by the bundle's **preset controller row** (`dsh-compaction-instant/preset-tools`, composition id and settings namespace `compaction-instant-preset-tools`). It lists the live preset roster from `remote.agentPresets.list()` and stores the enabled set as one volatile `presets` array whose default is **empty**. The ids it stores and compares are the preset `config.id` values the roster reports — for example `ptc-instant`, `standard-instant`, `chat-assistant`, `cordis-ptc` — not the `preset-ptc-instant` / `preset-standard-instant` entry ids used in the profile patch. A hand-written list with entry ids matches no Agent and renders those saved ids as currently unavailable.
 
 | Control | Behavior |
 |---|---|

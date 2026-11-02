@@ -354,6 +354,29 @@ rc.5 是当前唯一已验证的新功能基线。若继续保持更宽的 engin
 用户要求升级实际安装后执行了文件级部署，尚未重启宿主：
 
 1. profile 以 `link:/home/andyk/.dsh-local-plugins/dsh-compaction-instant` 安装本包，因此把工作区的 0.4.0 文件（`src`、`types`、`assets`、`package.json`、`cordis.patch.yml`、README、CHANGELOG、LICENSE）同步到该目录，保留其 `node_modules`；0.3.0 的副本备份在 `/tmp/dsh-compaction-instant-0.3.0-backup`。profile 的依赖声明未改。
-2. `~/.dsh/profiles/web/cordis.patch.yml` 增加 `compaction-instant-preset-tools` 行，预选 `preset-standard-instant`、`preset-ptc-instant`、`preset-chat-assistant`、`preset-cordis-ptc`（即已把引擎行替换为 `dsh-compaction-instant` 的四个 preset），使升级后行为与升级前的全局可见性尽量对齐；其余 preset 不再获得 companions。
+2. `~/.dsh/profiles/web/cordis.patch.yml` 增加 `compaction-instant-preset-tools` 行，预选已把引擎行替换为 `dsh-compaction-instant` 的四个 preset。首次写入误用了 profile 的行 id（`preset-standard-instant` 等），而控制器比较的是 preset 的 `config.id`（`standard-instant`、`ptc-instant`、`chat-assistant`、`cordis-ptc`），两者不一致导致没有任何注册；2026-11-02 晚已按 `config.id` 修正并重新通过 `--dump-config` 校验。
 3. `dsh --profile web --dump-config` 通过：组合树包含 `compaction-instant`（settings）、`compaction-instant-preset-tools`（带 presets 配置）与 `compaction-instant-client`，不含 `tool-recall`/`command-recall`；四个 preset 的引擎行仍为 `dsh-compaction-instant`。
 4. 运行中的宿主进程仍加载 0.3.0 模块，文件升级要重启宿主后生效。重启后的 Plugins 页操作、真实模型请求、PTC 目标 scope 与回退演练仍未验证。
+
+### 14.6 部署后修复与真机验证（2026-11-02 至 11-03）
+
+第一次重启后控制器没有任何注册，日志给出唯一错误：
+
+    register-error … Error: cannot get property "commands" without inject
+
+Cordis 按"访问方 fiber 是否声明依赖"解析服务。Agent 作用域的父级（agent-loop）只声明了 `tools`，因此 `agent.ctx.commands` 被拒绝；事务在第三个注册处回滚，先成功的 `recall`、`search` 也一并撤销。修复方式是在 Agent 作用域上挂一条 `inject: ["tools", "commands"]` 的子 fiber，三个注册都在它的 `apply` 内完成：子 fiber 继承 Agent 的作用域标记，注册落进 Agent 自己的层，卸载该 fiber 即整体释放。用真实的 `@deepseek-ai/cordis` 与 `dsh-commands` 做了最小复现——`scope.ctx.commands` 抛出同一条错误，注入子 fiber 能登记成功，`commands.list` 验证命令只落在目标作用域层、作用域释放后清空。
+
+面板问题是同一守卫的另一种表现。浏览器模块没有在自身 fiber 声明 `remote.agentPresets`，经 `ctx.get("remote")` 取得服务后再做属性访问时被拒绝，`refresh()` 同步抛出，清单状态停在 `idle`，界面只画已保存的 id 且不留任何错误提示。修复方式是用 `inject: ["remote", "remote.agentPresets"]` 的子 fiber 解析清单服务，并附直接读取兜底与挂载后重试。
+
+测试同步收紧：控制器夹具的父级改为只注入 `tools`，复现生产条件；回滚用例改用 command-injected 子 fiber 预置同名命令。全量 200 项测试与类型检查通过。
+
+第二次重启（2026-11-03 01:04）后的现场证据：
+
+1. 日志记录 `apply presets=["chat-assistant","cordis-ptc","ptc-instant","standard-instant"]`；
+2. 本会话 `reconcile … desired=true` 之后紧接 `registered … tools=recall,search command=recall`；
+3. `host/Tool.listTools` 返回的 46 个工具中包含 `recall`、`search`；
+4. 本会话实际调用 `recall` 读取 checkpoint 1、调用 `search` 命中 19 条，PTC 绑定与执行路径均成立。
+
+清单在服务解析后正常渲染，四个系统自带预设原先回退成裸 id（`standard`、`ptc`、`minimal`、`cordis`）。按官方预设页面的做法补了一组本地化名称（标准模式、PTC 模式、极简模式、创造模式；英文为 Standard / PTC / Minimal / Creator mode）：仅当条目没有自带 `name` 且 id 命中这四个内置 id 时替换，自定义预设仍显示声明里的名称。
+
+临时诊断代码（面板的 `debug` 行与 `/tmp` 日志写入）已从工作区移除并同步到部署目录；运行中的宿主仍加载带诊断的版本，下一次重启后为干净版本。浏览器面板在强刷后的清单渲染与勾选保存仍需一次页面级确认；回退演练与更早版本的隔离图未重跑。

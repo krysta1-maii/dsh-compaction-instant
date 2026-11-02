@@ -163,17 +163,30 @@ export function apply(ctx, config) {
 
   const contextOf = (agent) => agent !== null && typeof agent === "object" ? agent.ctx : undefined;
 
+  /** Durable preset identity recorded on the session header, when present. */
+  const headerPresetOf = (agent) => {
+    try {
+      const header = agent !== null && typeof agent === "object" ? agent.session?.header : undefined;
+      const preset = header !== null && typeof header === "object" ? header.agentPreset : undefined;
+      return typeof preset === "string" && preset !== "" ? preset : null;
+    } catch {
+      return null;
+    }
+  };
+
   /** Read the preset an Agent is actually composed from. */
   const presetOf = (agent) => {
     const agentCtx = contextOf(agent);
     if (agentCtx === undefined) return null;
+    let composed = null;
     try {
       const preset = ctx.agentPresets.composedPreset(agentCtx);
-      return typeof preset === "string" && preset !== "" ? preset : null;
+      composed = typeof preset === "string" && preset !== "" ? preset : null;
     } catch (error) {
       warn(`compaction-instant: cannot read the preset of a live agent: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
     }
+    const header = headerPresetOf(agent);
+    return composed ?? header;
   };
 
   const currentPresets = () => {
@@ -192,14 +205,31 @@ export function apply(ctx, config) {
   };
 
   /** Retry one Agent once its scope fiber settles, without registering twice. */
-  const deferUntilActive = (agent, agentCtx) => {
+  const deferUntilActive = (agent, agentCtx, attempt = 0) => {
     if (pending.has(agent)) return;
     pending.add(agent);
     const fiber = agentCtx.fiber;
     const settled = fiber !== undefined && typeof fiber.await === "function" ? fiber.await() : Promise.resolve();
     Promise.resolve(settled).then(() => {
+      if (disposed) {
+        pending.delete(agent);
+        return;
+      }
+      if (!isAgentScopeActive(agentCtx)) {
+        pending.delete(agent);
+        if (attempt < 4) {
+          // A scope that is still not active after its pending work settled
+          // gets one bounded macrotask-level retry; the pre-step pass below
+          // is the final safety net.
+          setTimeout(() => {
+            if (!disposed) deferUntilActive(agent, agentCtx, attempt + 1);
+          }, 0);
+        } else {
+          warn(`compaction-instant: agent scope for session ${String(agent?.id)} stayed inactive; waiting for the next step`);
+        }
+        return;
+      }
       pending.delete(agent);
-      if (disposed) return;
       try {
         reconcileAgent(agent);
       } catch (error) {
@@ -227,11 +257,26 @@ export function apply(ctx, config) {
     const record = records.get(agent);
     if (record === undefined) return false;
     records.delete(agent);
-    releaseDisposers(record.disposers);
+    const failure = (error) => warn(`compaction-instant: a recall companion fiber failed to unload: ${error instanceof Error ? error.message : String(error)}`);
+    try {
+      const unloading = record.fiber?.dispose?.();
+      if (unloading !== undefined && typeof unloading.then === "function") unloading.catch(failure);
+    } catch (error) {
+      failure(error);
+    }
     return true;
   };
 
-  /** Register the three companions transactionally in the Agent scope. */
+  /**
+   * Register the three companions transactionally in the Agent scope.
+   *
+   * A service is resolved through the fiber that declares it, so the Agent
+   * scope answers `agent.ctx.tools` but refuses `agent.ctx.commands` unless the
+   * accessing fiber injects `commands`. Both registrations therefore live in
+   * one child fiber of the Agent scope that injects both registries: that
+   * fiber's scope tag places every effect in the Agent's layer, and unloading
+   * it releases all three together.
+   */
   const register = (agent, presetId) => {
     const agentCtx = contextOf(agent);
     if (agentCtx === undefined) return false;
@@ -242,17 +287,42 @@ export function apply(ctx, config) {
       deferUntilActive(agent, agentCtx);
       return false;
     }
-    const disposers = [];
-    try {
-      disposers.push(agentCtx.tools.register(defineRecallTool(toolConfig)));
-      disposers.push(agentCtx.tools.register(defineSearchTool(toolConfig)));
-      disposers.push(agentCtx.commands.register(defineRecallCommand(commandConfig)));
-    } catch (error) {
-      releaseDisposers(disposers);
+    const record = { presetId, registered: false, failed: false, fiber: undefined };
+    const fail = (error) => {
+      record.failed = true;
       warn(`compaction-instant: could not register recall companions on preset "${presetId}" (session ${String(agent.id)}): ${error instanceof Error ? error.message : String(error)}`);
+    };
+    const applyCompanions = (companionCtx) => {
+      const disposers = [];
+      try {
+        disposers.push(companionCtx.tools.register(defineRecallTool(toolConfig)));
+        disposers.push(companionCtx.tools.register(defineSearchTool(toolConfig)));
+        disposers.push(companionCtx.commands.register(defineRecallCommand(commandConfig)));
+      } catch (error) {
+        releaseDisposers(disposers);
+        if (records.get(agent) === record) records.delete(agent);
+        fail(error);
+        return;
+      }
+      record.registered = true;
+    };
+    try {
+      record.fiber = agentCtx.plugin({
+        name: "compaction-instant/recall-companions",
+        inject: ["tools", "commands"],
+        apply: applyCompanions
+      });
+    } catch (error) {
+      fail(error);
       return false;
     }
-    records.set(agent, { presetId, registered: true, disposers });
+    if (record.failed) {
+      // A synchronous activation already reported the failure; the empty
+      // fiber must not outlive the attempt or block the next reconcile.
+      try { record.fiber?.dispose?.(); } catch { /* the fiber never started */ }
+      return false;
+    }
+    records.set(agent, record);
     return true;
   };
 
@@ -334,6 +404,18 @@ export function apply(ctx, config) {
     }
   });
 
+  // Final safety net: reconcile right before a step assembles its request. An
+  // Agent whose scope was still mounting, or whose created notification was
+  // missed by a late mount, gains the companions before the next model call.
+  const stopPreStep = ctx.on("agent/pre-step", async ({ agent }, next) => {
+    try {
+      reconcileAgent(agent);
+    } catch (error) {
+      warn(`compaction-instant: pre-step preset reconciliation failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return next();
+  });
+
   // Settings follow is optional: without a settings service the composition
   // config above remains the whole target state.
   ctx.inject(["settings"], (scoped) => {
@@ -363,6 +445,7 @@ export function apply(ctx, config) {
       stopCreated();
       stopDisposed();
       stopSelected();
+      stopPreStep();
       releaseAll();
     };
   }, "compaction-instant: preset companion registrations");

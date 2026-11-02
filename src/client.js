@@ -118,6 +118,10 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     presetsHint: "保存只记录目标预设，由 Host 按各 Agent 实际使用的预设即时注册或注销；已开始的调用不会中断。",
     presetsDefault: "默认",
     presetsBroken: "不可用",
+    presetsBuiltinStandard: "标准模式",
+    presetsBuiltinPtc: "PTC 模式",
+    presetsBuiltinMinimal: "极简模式",
+    presetsBuiltinCordis: "创造模式",
     presetsMissing: "当前不可用",
     presetsEmpty: "当前没有可选的预设。",
     presetsLoading: "正在读取预设列表…",
@@ -156,6 +160,10 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     presetsHint: "Saving records the target presets; the Host registers or releases each Agent as it runs. Calls that already started are never interrupted.",
     presetsDefault: "Default",
     presetsBroken: "Unavailable",
+    presetsBuiltinStandard: "Standard mode",
+    presetsBuiltinPtc: "PTC mode",
+    presetsBuiltinMinimal: "Minimal mode",
+    presetsBuiltinCordis: "Creator mode",
     presetsMissing: "Currently unavailable",
     presetsEmpty: "No presets are available right now.",
     presetsLoading: "Reading the preset list…",
@@ -395,17 +403,10 @@ function makeInstantCompactionClientFactory(bundlePackage) {
    * assembly still shows saved selections but hides the roster; the engine
    * form never depends on it.
    */
-  function rosterSource(ctx) {
-    var remote;
-    try {
-      remote = typeof ctx.get === "function" ? ctx.get("remote") : void 0;
-    } catch (_) {
-      return void 0;
-    }
-    if (remote === null || typeof remote !== "object") return void 0;
-    var agentPresets = remote.agentPresets;
-    if (agentPresets === null || typeof agentPresets !== "object" || typeof agentPresets.list !== "function") return void 0;
-    return agentPresets;
+  function rosterSource(controller) {
+    var service = controller.rosterApi;
+    if (service !== null && typeof service === "object" && typeof service.list === "function") return service;
+    return void 0;
   }
 
   /**
@@ -426,6 +427,8 @@ function makeInstantCompactionClientFactory(bundlePackage) {
       this.failed = false;
       this.refreshing = false;
       this.mounted = false;
+      /** Remote namespace service, resolved by a fiber that injects it. */
+      this.rosterApi = void 0;
       this.roster = { status: "idle", presets: [], error: null, loaded: false };
       this.unsubscribe = scope.subscribe(this.publish.bind(this));
     }
@@ -562,6 +565,16 @@ function makeInstantCompactionClientFactory(bundlePackage) {
       var self = this;
       Promise.resolve().then(function () { self.refresh(); });
     };
+    /**
+     * Adopt the Remote namespace once a fiber that injects it has resolved the
+     * service. The namespace is optional: on a deployment without the preset
+     * registry the section keeps its saved ids and reports the roster missing.
+     */
+    PresetToolsController.prototype.useRoster = function (api) {
+      this.rosterApi = api;
+      if (!this.mounted) return;
+      if (this.roster.status === "idle" || this.roster.status === "unavailable" || this.roster.status === "error") this.refresh();
+    };
     PresetToolsController.prototype.discard = function () {
       if (this.draft === null && !this.failed) return;
       this.draft = null;
@@ -623,7 +636,7 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     PresetToolsController.prototype.refresh = function () {
       var self = this;
       if (this.refreshing) return;
-      var source = rosterSource(this.ctx);
+      var source = rosterSource(this);
       if (source === void 0) {
         this.roster = { status: "unavailable", presets: this.roster.presets, error: null, loaded: this.roster.loaded };
         this.publish();
@@ -734,6 +747,18 @@ function makeInstantCompactionClientFactory(bundlePackage) {
   }
 
   /**
+   * Shipped presets publish no `name`; their display copy ships with the
+   * client dictionaries, keyed like the official roster's labels. A
+   * declaration that publishes its own name keeps that name.
+   */
+  var BUILTIN_PRESET_NAME_KEYS = {
+    standard: "presetsBuiltinStandard",
+    ptc: "presetsBuiltinPtc",
+    minimal: "presetsBuiltinMinimal",
+    cordis: "presetsBuiltinCordis"
+  };
+
+  /**
    * One preset row: a native checkbox plus its associated label, with the
    * default marker, a broken reason, or the "currently unavailable" note.
    */
@@ -796,10 +821,15 @@ function makeInstantCompactionClientFactory(bundlePackage) {
       children.push(React.createElement("p", { className: "dsci_hint", key: "roster-empty" }, t("presetsEmpty")));
     }
     var list = rows.map(function (row, index) {
+      // A shipped preset publishes no name, so render the client's localized
+      // label instead of the bare technical id.
+      var named = row.name === void 0 && BUILTIN_PRESET_NAME_KEYS[row.id] !== void 0
+        ? { ...row, name: t(BUILTIN_PRESET_NAME_KEYS[row.id]) }
+        : row;
       return React.createElement(PresetRow, {
         key: row.id,
         id: "plugin-config-preset-" + String(index),
-        row: row,
+        row: named,
         disabled: !state.writable || row.locked === true,
         defaultLabel: t("presetsDefault"),
         brokenLabel: t("presetsBroken"),
@@ -850,6 +880,9 @@ function makeInstantCompactionClientFactory(bundlePackage) {
   function CompactionConfigPage(props) {
     var state = props.useCompactionCard(function (snapshot) { return snapshot; });
     var tools = typeof props.usePresetTools === "function" ? props.usePresetTools(function (snapshot) { return snapshot; }) : void 0;
+    // Idempotent: the roster read is scheduled once, even when the slot inject
+    // ran before the panel first rendered.
+    if (typeof props.mountPresets === "function") props.mountPresets();
     var t = props.t;
     if (props.view === "summary") return t("description");
     var engineVisible = state !== null && state !== void 0 && state.available === true;
@@ -1003,6 +1036,22 @@ function makeInstantCompactionClientFactory(bundlePackage) {
       numberField("retainTokens")
     ]);
     var presetController = new PresetToolsController(ctx, ctx.configForms.get(PRESET_SETTINGS_NAMESPACE));
+    // The roster arrives through the optional `remote.agentPresets` service. A
+    // child fiber injects it (the client API guard resolves services through
+    // the fiber that declares them), so this module still mounts on a
+    // deployment without the preset registry. A direct read covers hosts where
+    // the service is already active before this module applies.
+    var adoptRoster = function (api) {
+      if (api !== null && typeof api === "object" && typeof api.list === "function") presetController.useRoster(api);
+    };
+    if (typeof ctx.get === "function") {
+      try { adoptRoster(ctx.get("remote.agentPresets")); } catch (_) { /* optional namespace */ }
+    }
+    if (typeof ctx.inject === "function") {
+      ctx.inject(["remote", "remote.agentPresets"], function (scoped) {
+        try { adoptRoster(scoped.remote.agentPresets); } catch (_) { /* withdrawn during teardown */ }
+      });
+    }
     var store = controller.bind(function () {
       var shell = controller.shell();
       return {
@@ -1037,7 +1086,8 @@ function makeInstantCompactionClientFactory(bundlePackage) {
               return {
                 hooks: { compactionCard: store, presetTools: presetStore },
                 ...controller.actions(),
-                ...presetController.actions()
+                ...presetController.actions(),
+                mountPresets: function () { presetController.mount(); }
               };
             }
           }, CompactionConfigPage);

@@ -124,7 +124,12 @@ function mount(client, options = {}) {
   const ctx = {
     effect: (factory) => factory(),
     locale: { register: () => () => {} },
-    get: (name) => name === "remote" ? remote : undefined,
+    // The module resolves the roster through a child fiber that injects the
+    // optional Remote namespace, the same path a shipped UI plugin uses.
+    inject: (deps, callback) => {
+      if (Array.isArray(deps) && deps.includes("remote.agentPresets") && remote !== undefined && remote.agentPresets !== undefined) callback({ remote });
+      return () => {};
+    },
     configForms: {
       get: (namespace) => {
         assert.ok(namespace === ENGINE_NS || namespace === PRESET_NS, "unexpected namespace: " + namespace);
@@ -322,6 +327,20 @@ test("the roster loads on page mount and renders names, defaults, and broken rea
   assert.equal(state.rows[2].broken, "missing row");
   assert.equal(state.rows[2].locked, true, "a broken preset cannot be newly enabled");
   assert.equal(c.remoteCalls.length, 1, "one roster read on mount");
+});
+
+test("a nameless shipped preset renders its localized name, not the bare id", async () => {
+  const roster = () => Promise.resolve({ ok: true, value: { presets: [{ id: "standard" }, { id: "ptc" }, { id: "craft" }] } });
+  const c = mount(loadClient(), { roster });
+  await flush();
+  const state = c.presetState();
+  assert.equal(state.rows[0].name, undefined, "the controller keeps the roster payload as served");
+  const page = c.render();
+  const section = renderSection(page);
+  const list = section.props.children.find((child) => child?.props?.className === "dsci_presets");
+  assert.equal(list.props.children[0].props.row.name, "presetsBuiltinStandard");
+  assert.equal(list.props.children[1].props.row.name, "presetsBuiltinPtc");
+  assert.equal(list.props.children[2].props.row.name, undefined, "an unknown nameless id keeps its id fallback");
 });
 
 test("checking a preset only stages a draft; save writes one sorted array", async () => {

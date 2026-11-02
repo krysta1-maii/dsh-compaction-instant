@@ -79,9 +79,11 @@ async function fixture(options = {}) {
   await ctx.plugin(CommandRuntime);
   if (options.mode === "ptc") await ctx.plugin(FakeRuntime);
   // A loop-like owner that declares the services an Agent scope resolves
-  // through, matching dsh-agent-loop's own injection list.
+  // through. It injects only `tools`, matching dsh-agent-loop: the Agent scope
+  // answers `agent.ctx.tools` but refuses `agent.ctx.commands`, so the
+  // controller must register the command through a command-injected child.
   let owner;
-  await ctx.plugin({ name: "test-agent-owner", inject: ["tools", "commands"], apply(once) { owner = once; } });
+  await ctx.plugin({ name: "test-agent-owner", inject: ["tools"], apply(once) { owner = once; } });
 
   let changeCount = 0;
   ctx.on("tools/change", () => { changeCount += 1; });
@@ -309,7 +311,14 @@ test("a partial registration failure rolls back and never blocks Agent creation"
     const { agent } = await fx.createAgent("s-conflict", "ptc");
     // A statically composed /recall already owns the command name in this
     // Agent scope, so the third registration fails after two succeeded.
-    agent.ctx.commands.register({ name: "recall", description: "static", handler: () => ({ kind: "success", text: "ok" }) });
+    agent.ctx.plugin({
+      name: "static-recall",
+      inject: ["commands"],
+      apply(ctx) {
+        ctx.commands.register({ name: "recall", description: "static", handler: () => ({ kind: "success", text: "ok" }) });
+      }
+    });
+    await settle();
     await fx.announce(agent);
     assert.deepEqual(fx.toolNames(agent), [], "the two created tools were rolled back");
     assert.deepEqual(fx.commandNames(agent), ["recall"], "the pre-existing command survives");

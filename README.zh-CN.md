@@ -126,7 +126,7 @@ bundle 还会安装一个**惰性客户端承载行**（`compaction-instant-clie
 
 #### 历史恢复工具区
 
-引擎字段下方是同一个页面里的第二块区域，由 bundle 的**预设控制器行**提供（`dsh-compaction-instant/preset-tools`，组合行 id 与设置命名空间均为 `compaction-instant-preset-tools`）。它通过 `remote.agentPresets.list()` 读取当前预设清单，并把启用集合保存为一个 volatile `presets` 数组，默认值为**空**：
+引擎字段下方是同一个页面里的第二块区域，由 bundle 的**预设控制器行**提供（`dsh-compaction-instant/preset-tools`，组合行 id 与设置命名空间均为 `compaction-instant-preset-tools`）。它通过 `remote.agentPresets.list()` 读取当前预设清单，并把启用集合保存为一个 volatile `presets` 数组，默认值为**空**。它保存和比较的 id 是清单显示的 preset `config.id`——例如 `ptc-instant`、`standard-instant`、`chat-assistant`、`cordis-ptc`——不是 profile patch 里的 `preset-ptc-instant` / `preset-standard-instant` 行 id。手写配置若填行 id，不会匹配任何 Agent，这些 id 会显示为“当前不可用”。
 
 | 控件 | 行为 |
 |---|---|
