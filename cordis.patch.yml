@@ -1,6 +1,8 @@
-# dsh-compaction-instant 0.3.0 bundle layer for DSH 0.2.x.
-# Verified targets: 0.2.0-rc.1, 0.2.0-rc.2, 0.2.1-alpha.5, and 0.2.1-rc.3
-# (1f81c047fc48fa190a683e469daa699857e9afe8); other versions remain untested.
+# dsh-compaction-instant 0.4.0 bundle layer for DSH 0.2.x.
+# Verified target for this release: 0.2.1-rc.5
+# (b830ec950faba0a46dda564be3e2d854afed94f1). Earlier 0.3.0 targets were
+# verified for that release only; this release re-verifies rc.5 alone, so do
+# not read the peer range as a 0.4.0 compatibility claim.
 #
 # Companion rows only: loading this bundle does NOT activate the engine.
 # Override the preset's isolated compaction group in the profile patch so its
@@ -11,6 +13,16 @@
 # schema makes DSH 0.2.0 serve the compaction-instant settings form, so the
 # Plugins page can edit engine preferences live (persisted into the profile
 # patch). Disable the row and every engine falls back to composition-only.
+#
+# The compaction-instant-preset-tools row owns the recall companions. It
+# serves its own volatile "presets" list (namespace
+# compaction-instant-preset-tools, default empty) and registers recall,
+# search, and /recall in the scope of the live Agents whose composed preset is
+# selected on the Plugins page. This bundle no longer installs the
+# Host-global tool-recall or command-recall rows: after an upgrade the
+# companions are off until a preset is enabled in the panel. Do not mix a
+# static dsh-compaction-instant/tool or /command row into a preset that the
+# panel also enables for the same Agent.
 #
 # The compaction-instant-client row carries the browser half: dsh-client-modules
 # mounts a bundle's client module on the profile row whose specifier is exactly
@@ -24,12 +36,10 @@
 # The user's later profile patch can override these rows.
 
 - insert:
-    - id: tool-recall
-      name: dsh-compaction-instant/tool
-    - id: command-recall
-      name: dsh-compaction-instant/command
     - id: compaction-instant
       name: dsh-compaction-instant/settings
+    - id: compaction-instant-preset-tools
+      name: dsh-compaction-instant/preset-tools
     - id: compaction-instant-client
       name: dsh-compaction-instant
       config:

@@ -15,13 +15,14 @@
 
 | dsh-compaction-instant | DeepSeek Harness | Node.js |
 |---|---|---|
-| `0.3.0` | `0.2.0-rc.1`, `0.2.0-rc.2`, `0.2.1-alpha.5`, `0.2.1-rc.3` | `>=22.12.0` |
+| `0.4.0` | `0.2.1-rc.5`（本版本重新验证） | `>=22.12.0` |
+| `0.3.0` | `0.2.0-rc.1`, `0.2.0-rc.2`, `0.2.1-alpha.5`, `0.2.1-rc.3`, `0.2.1-rc.5` | `>=22.12.0` |
 | `0.2.0`, `0.2.1` | `0.2.0-rc.1`, `0.2.0-rc.2` | `>=22.12.0` |
 | `0.1.8` | `0.1.7` | `>=22.12.0` |
 | `0.1.7` | `0.1.7` | `>=22.12.0` |
 | `0.1.6` | `0.1.5-rc.1` | `>=22.12.0` |
 
-0.3.0 以 **DSH 0.2.1-rc.3**（commit **1f81c047fc48fa190a683e469daa699857e9afe8**）为开发基线，peer/运行时范围保持 `^0.2.0-rc.1 || ^0.2.1-0`。开发锁定图为 0.2.1-rc.3、Cordis 4.0.5、Schemastery 3.18.5。兼容回归在四个隔离图上执行：**0.2.0-rc.1**（`4878cdabd87d4041bdaff61d04c966883b9fd07a`）、**0.2.0-rc.2**（`639ed015397290b3745d163aafe02ffee4aa3f84`）、**0.2.1-alpha.5**（`1517a4dbca0a2789ff1d41ba439600f8547d23fa`）与 **0.2.1-rc.3**。每个图都通过 170 项测试（rc.3 为 177 项）、语法/严格声明检查及隔离 tarball 检查；rc.1/rc.2 图使用 cordis 4.0.5，以满足固定 Cordis 插件的 peer 约束。其他 0.2.1 预发布版及正式 0.2.1 未单独验证。它仍跟随 0.1.7 消息模型——工具结果是一等 `role: "tool"` 消息，`toolCallId` 提升为顶层字段，不再包在 user 角色块里——并使用 `compact-checkpoint` 检查点源标记；旧宿主写入的检查点（`kind: "plugin", plugin: "compact"`）在持久日志中仍会被识别。检查点替换仍是 `surfaceOp: { op: "replace", startSeq, endSeq }`，不支持旧替换字段 `start` / `end`；固定迁移目标也不代表对所有未来版本的兼容承诺。
+0.4.0 以 **DSH 0.2.1-rc.5**（commit **b830ec950faba0a46dda564be3e2d854afed94f1**）为开发基线，peer/运行时范围保持 `^0.2.0-rc.1 || ^0.2.1-0`。开发锁定图为 0.2.1-rc.5、Cordis 4.0.5、Schemastery 3.18.5。**本版本**的兼容回归只在 rc.5 图上执行：200 项 checkout 测试、语法/严格声明检查、隔离 tarball 检查（192 项产物测试）。更早的 0.3.0 曾在 **0.2.0-rc.1**（`4878cdabd87d4041bdaff61d04c966883b9fd07a`）、**0.2.0-rc.2**（`639ed015397290b3745d163aafe02ffee4aa3f84`）、**0.2.1-alpha.5**（`1517a4dbca0a2789ff1d41ba439600f8547d23fa`）、**0.2.1-rc.3** 与 **0.2.1-rc.5** 上验证；这些旧图没有为 0.4.0 重跑，所以保持不变的 peer 范围不构成 0.4.0 的验证声明。它仍跟随 0.1.7 消息模型——工具结果是一等 `role: "tool"` 消息，`toolCallId` 提升为顶层字段，不再包在 user 角色块里——并使用 `compact-checkpoint` 检查点源标记；旧宿主写入的检查点（`kind: "plugin", plugin: "compact"`）在持久日志中仍会被识别。检查点替换仍是 `surfaceOp: { op: "replace", startSeq, endSeq }`，不支持旧替换字段 `start` / `end`；固定迁移目标也不代表对所有未来版本的兼容承诺。
 
 surface 第 0 个节点若是 `system/message`，系统头会留在压缩范围之外；自动选区从其后的 surface 节点开始，显式替换范围也不能包含系统头。Instant 保留策略不变：`retainTurns` 是偏好，`retainTokens`（或 `retainRatio` 换算预算）是上限，最近回合超限时保留能装下的后缀。工具配对保护可能将后缀扩展到超过上限；受保护的系统头单独保留。目标版本 basic 则按**最近尾部最低预算**选区，不是 instant 的整回合/上限策略，不能假定配置或行为完全等价。
 
@@ -53,7 +54,9 @@ next question
 
 ## Recall：把丢掉的内容找回来
 
-本包还配套了"找回"能力——**同一会话内的回读**，模型和人都能用。因为会话日志只增不改，编译器从持久事件中省略过的每一个字都还在，随时可取：
+本包还配套了"找回"能力——**同一会话内的回读**，模型和人都能用。因为会话日志只增不改，编译器从持久事件中省略过的每一个字都还在，随时可取。
+
+0.4.0 起，这三项不再注册到 Host 全局层，而是**按 preset、注册到每个 Agent 自己的 scope**：bundle 的 `preset-tools` 行保存启用预设列表（默认空），只对"实际使用被启用预设"的在线 Agent 注册或注销下表中的三项。表中"模块"列是该定义所在的子路径；直接挂这一子路径是手写组合时的静态替代做法：
 
 | 入口 | 模块 | 作用 |
 |---|---|---|
@@ -62,7 +65,9 @@ next question
 | `/recall` **命令**（给人用，grep） | `dsh-compaction-instant/command` | `/recall <关键词|正则>` 追加一条持久的用户消息，内含匹配事件和 seq 指针，下一轮模型就能看到 |
 | 共享核心 | `dsh-compaction-instant/recall` + `dsh-compaction-instant/search` | seq 解析（`12`、`3-7`、`seq 12` / `seqs 3-7`）、日志展开、预算、字段筛选；正则编译与命中展示 |
 
-Recall 可回读日志中的文本、推理过程、工具调用的完整参数、嵌套的工具结果与文件引用元数据（可回读/搜索的是引用，不是附件字节）；只在日志里出现过的事件会以带标签的原始数据展示；找不到的 seq 会明确报错。`maxRecallTokens` 预算（默认 **16000**）超限时会截断并标注来源、统计跳过多少；搜索限制展示条数（`maxSearchHits`，默认 **50**）。工具 canonical value 还包含结构化的 `hits`（`seq`/`kind`/`text`）与 recall 的 `entries`/`seqs`，PTC 程序无需解析展示文本即可完成 search → recall；Native 渲染文本保持不变。这两个插件是独立的一行，可以挂在**任何**压缩引擎旁边——它们只读日志，不依赖本引擎。
+Recall 可回读日志中的文本、推理过程、工具调用的完整参数、嵌套的工具结果与文件引用元数据（可回读/搜索的是引用，不是附件字节）；只在日志里出现过的事件会以带标签的原始数据展示；找不到的 seq 会明确报错。`maxRecallTokens` 预算（默认 **16000**）超限时会截断并标注来源、统计跳过多少；搜索限制展示条数（`maxSearchHits`，默认 **50**）。工具 canonical value 还包含结构化的 `hits`（`seq`/`kind`/`text`）与 recall 的 `entries`/`seqs`，PTC 程序无需解析展示文本即可完成 search → recall；Native 渲染文本保持不变。这些工具只读日志、不依赖本引擎，因此两种注册方式都可以挂在**任何**压缩引擎旁边。
+
+两种方式对同一个 Agent 是二选一，不是叠加：若某个 preset 已经静态挂载 `dsh-compaction-instant/tool` 或 `/command`，就不要再在面板里为它启用同名工具，否则同一个 Agent 会出现两份同名定义。取消启用只影响之后的可见性与执行查找，不会中断已经开始执行的 `recall`/`search` 调用或已开始的 `/recall` 追加。
 
 有两条边界属于契约的一部分：
 
@@ -119,7 +124,22 @@ DSH 0.1.7 用基于 profile patch 的设置表单取代了旧的设置卡片 API
 
 bundle 还会安装一个**惰性客户端承载行**（`compaction-instant-client`，以裸包名加 `carrier: true` 声明）：dsh-client-modules 只把组合包的浏览器半侧挂到说明符恰为包名的 profile 行上，该行就是这个锚点。根模块把它分发为空操作，不会在 profile 层挂出与预设引擎竞争的第二个引擎。**请保持该行启用**——禁用它会隐藏插件页的配置区（引擎本身继续按组合配置工作）。
 
-其余字段（`modelPolicies`、`toolArgTools`、`debug`、`debugLogPath`、已弃用的 `maxTokens`/`checkpointScale` 等）仍只由 Cordis 配置管理。未填写的字段继承各引擎自身默认值，所以新建的桥接行一开始是**空的**，不会把默认值复制进 profile。`retainRatio` 与 `retainTokens` 是互斥模式：两者同时出现时按比例模式处理；填写 `retainTokens` 期间会清除组合里的比例模式。若表单内容与某引擎自身组合冲突（例如 `retainRatio` 不低于该引擎的 `thresholdRatio`），只有该引擎记录警告并继续**只使用组合配置**，直到表单对它恢复有效；其余引擎不受影响。设置平面会在写入时校验每个字段，但 0.1.5 卡片的跨引擎组合校验已不存在——冲突的覆盖现在表现为该引擎的警告，而不是拒绝写入。没有桥接行（或没有 settings 服务）时，所有引擎只使用组合配置。0.1.5 卡片写入的旧 `settings.yaml` 覆盖会由宿主的 0.1.7 迁移自动导入。安装后需先请用户确认宿主重载/重启，再让启动图拾取 `dsh.client` bundle；不要自动重启用户宿主。
+#### 历史恢复工具区
+
+引擎字段下方是同一个页面里的第二块区域，由 bundle 的**预设控制器行**提供（`dsh-compaction-instant/preset-tools`，组合行 id 与设置命名空间均为 `compaction-instant-preset-tools`）。它通过 `remote.agentPresets.list()` 读取当前预设清单，并把启用集合保存为一个 volatile `presets` 数组，默认值为**空**：
+
+| 控件 | 行为 |
+|---|---|
+| 预设勾选框 | 暂存选择。保存时写入排序后的数组；Host 控制器随后为"实际组合到列表中预设"的每个在线 Agent 注册 `recall`、`search` 与 `/recall`，并释放其余 Agent。 |
+| 刷新列表 | 按需重新读取预设清单，不做轮询。读取失败会保留已保存配置与草稿，并显示成可重试的错误。 |
+| 重置 | 清除已存储字段，回到 schema 默认值 `[]`，从而释放全部动态注册。 |
+| 保存 / 放弃 | 一次原子写入 `presets`。写入被拒或失败时保留草稿，错误只显示在本区域。 |
+
+清单能表达的每种状态都会被呈现：默认预设带标记；broken 预设显示原因且不能被新启用（已启用的仍可取消）；已离开清单但仍保存在配置里的 id 标记为"当前不可用"，可以移除。连接读不到 `agentPresets` 时隐藏清单，但仍可移除已保存的 id；只读连接禁用全部写操作。上方的引擎字段与本区域互相独立：任一 Host 行被禁用时只隐藏它自己的区域。
+
+本区域的启用列表与压缩参数、与引擎行都无关：重置它不会清除压缩设置，修改压缩设置也不会重新注册工具。
+
+其余字段（`modelPolicies`、`toolArgTools`、`debug`、`debugLogPath`、已弃用的 `maxTokens`/`checkpointScale` 等）仍只由 Cordis 配置管理。`retainRatio` 与 `retainTokens` 是互斥模式：两者同时出现时按比例模式处理；填写 `retainTokens` 期间会清除组合里的比例模式。若表单内容与某引擎自身组合冲突（例如 `retainRatio` 不低于该引擎的 `thresholdRatio`），只有该引擎记录警告并继续**只使用组合配置**，直到表单对它恢复有效；其余引擎不受影响。设置平面会在写入时校验每个字段，但 0.1.5 卡片的跨引擎组合校验已不存在——冲突的覆盖现在表现为该引擎的警告，而不是拒绝写入。没有桥接行（或没有 settings 服务）时，所有引擎只使用组合配置。0.1.5 卡片写入的旧 `settings.yaml` 覆盖会由宿主的 0.1.7 迁移自动导入。安装后需先请用户确认宿主重载/重启，再让启动图拾取 `dsh.client` bundle；不要自动重启用户宿主。
 
 ### 分词与多语言
 
@@ -178,12 +198,12 @@ Harness 自带的 token 计量器与 compiler 估算器彼此独立。DSH 0.1.7 
 用 Harness 插件管理器安装到实际宿主使用的 profile。仅当该版本已发布时使用 npm 版本；否则使用下文重新打包的本地 tarball：
 
 ```bash
-dsh plugin --profile web add dsh-compaction-instant@0.3.0
+dsh plugin --profile web add dsh-compaction-instant@0.4.0
 ```
 
 DSH Desktop 对应版本请将 `--profile web` 换为 `--profile desktop`。先启动一次 Desktop 初始化 profile，再完全退出后执行 CLI 包操作，完成后重新打开；中断活跃会话前必须先征得用户确认。
 
-本包的 `dsh.bundle` **只安装 recall/search 工具、/recall 命令、设置桥接行和惰性客户端承载行，不安装压缩引擎**。能看到 recall 工具或插件页配置区块，**不等于即时压缩引擎已启用**；不要因为安装了本包就假定 `standard` 使用它。
+本包的 `dsh.bundle` **只安装设置桥接行、负责 recall 工具组的预设控制器行和惰性客户端承载行，不安装压缩引擎**。它**不再安装** Host 全局的 recall 工具或命令：升级后工具组默认关闭，必须在面板里启用目标预设（见下文）。能看到 recall 工具或插件页配置区块，**不等于即时压缩引擎已启用**；不要因为安装了本包就假定 `standard` 使用它。
 
 DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` 声明（web-app include 树中的 `preset-standard`）；profile 的 `cordis.patch.yml` 中同 id 的行会**整体替换**它，因此覆盖时必须完整重述 `config`——`plugins` 的每一行都要保留，而不是只写差异。不要编辑内置预设安装文件。
 
@@ -212,6 +232,8 @@ DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` �
 
 3. 新建验证会话时选择 `standard` 预设，检查实际解析的插件模块/版本及引擎挂载，再验证 `/compact` 与 recall。预设出现在列表里、recall 可用，都不能代替引擎激活检查；也不要假定已有会话已切换到编辑后的组合。
 
+**启用历史恢复工具（0.4.0 起）。** 打开 **插件 → dsh-compaction-instant → 配置**，在"历史恢复工具"区域勾选需要 `recall`、`search` 与 `/recall` 的预设，然后保存。列表默认是空的，因此升级后工具组处于关闭状态，直到完成这一步。保存只记录目标列表：Host 控制器会为这些预设的当前与后续 Agent 注册工具组，取消勾选时释放；不需要改预设 YAML，不改预设 revision，也不需要重启。已经在这里启用的预设，就不要再额外挂载 `dsh-compaction-instant/tool` 或 `/command`。
+
 **PTC 预设是独立的。** 内置 PTC 预设（`preset-ptc`）为工具组设置了 `mode: "ptc"`。安装本包、或只覆盖 `preset-standard`，都不会改变使用 `preset-ptc` 的会话所用引擎。要在 PTC 下启用即时压缩，请把内置 `preset-ptc` 行复制到 profile patch，保留 `mode: "ptc"`、`command-compact` 和 `tool-result-pruner`，只把其 `compaction` 组里的引擎行换成本包，然后显式选择该预设；使用 `mode: "ptc"` 的自定义预设同理。bundle 安装本身仍不会激活 instant 引擎。
 
 完全自定义的预设（另起一行 `@deepseek-ai/dsh-agent-preset`，使用自己的 `config.id`）同样可行，且不影响内置 `standard`，只需显式选择。每个预设上下文只能挂载一个 `ctx.compaction` 实现。不要添加宿主层引擎兜底：未限定作用域的监听器可能收到 agent 事件，与预设后端竞争。`/compact` 本身不绑定特定后端，但所选预设仍须有已启用的压缩后端。
@@ -224,7 +246,7 @@ DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` �
 # 在本插件源码目录重新生成包产物。
 npm pack
 # 将这个新产物安装到实际宿主 profile，使用它的绝对路径。
-dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.3.0.tgz
+dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.4.0.tgz
 ```
 
 执行这些部署步骤前，先向用户确认目标 profile、安装包名（直接安装还是别名）、当前解析路径/版本和目标预设。若已有旧别名部署，应明确规划替换/移除，避免留下两套可能的引擎解析路径。安装后检查新产物及自定义预设实际解析结果。**宿主重载/重启必须先经用户确认**，因为可能中断活跃会话。重载宿主以重新加载包代码和启动元数据，然后刷新 Web 页面，在原宿主 URL 和新会话上验证；profile patch 热重载或仅刷新页面，都不能证明已加载模块换成了新代码。以上是操作步骤，不代表本版本已经部署。
@@ -238,17 +260,20 @@ dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.3.0.tgz
 ## 开发
 
 ```bash
-npm ci          # 精确安装 DSH 0.2.1-rc.3 开发依赖图
+npm ci          # 精确安装 DSH 0.2.1-rc.5 开发依赖图
 npm test        # compiler/config/session/settings/engine 集成测试
 npm run check   # 源码语法 + 严格公共类型声明检查
 npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注册检查
 ```
 
-本包只有两个直接运行时依赖：`@deepseek-ai/schemastery` 用于配置 schema（包括设置桥接的 volatile 字段），`@deepseek-ai/dsh-util-values` 提供共享不可变值工具。其余 Harness 组件仍是 peer；测试使用锁定的 0.2.1-rc.3 开发依赖。`src/compiler.js` 仍保持零依赖。
+本包只有两个直接运行时依赖：`@deepseek-ai/schemastery` 用于配置 schema（包括两个 volatile 设置表单），`@deepseek-ai/dsh-util-values` 提供共享不可变值工具。其余 Harness 组件仍是 peer；测试使用锁定的 0.2.1-rc.5 开发依赖，其中 `@deepseek-ai/dsh-scope` 用于控制器测试构造真实 Agent scope。`src/compiler.js` 仍保持零依赖。
 
-0.3.0 的验证范围包括新替换字段与旧形状拒绝、系统头保护、显式范围、保留策略/工具配对、持久重放/来源记录、recall/search 文件引用、tool 角色消息投影、两代检查点标记、非安全 seq 拒绝、recall 条目上限与取消、PTC dispatch 编译与结果回读、结构化 search/recall 值、spill preview 与 dispatch 时序、设置桥接 schema 及设置平面的跟随/回退行为、根模块分发（承载行惰性、carrier 键剥离、引擎 fiber 状态传播），以及安装产物导出/浏览器注册。在 Linux、Node 24.22.1 上实测：rc.3 开发图通过全部 177 项检出测试、语法/类型检查与隔离 tarball 检查（169 项安装产物测试）；隔离的 rc.1、rc.2、alpha.5 图各通过 170 项检出测试、对应检查与 tarball 检查。运行中宿主重启、真实 GUI 验证、部署、真实 `preset-ptc` 组合与真实模型请求本次未执行。上方压缩率表是历史测量，不是本版本重新运行的结果。
+0.4.0 在 0.3.0 的验证范围（替换字段与旧形状拒绝、系统头保护、显式范围、保留策略/工具配对、持久重放/来源记录、recall/search 文件引用、tool 角色消息投影、两代检查点标记、非安全 seq 拒绝、recall 条目上限与取消、PTC dispatch 编译与结果回读、结构化 search/recall 值、spill preview 与 dispatch 时序、设置桥接 schema 与设置平面的跟随/回退、根模块分发、安装产物导出/浏览器注册）之上，新增预设控制器与双区域页面：
 
-本次 Windows 沙箱验证以无子进程隔离模式运行测试（`node --test --experimental-test-isolation=none`；打包检查通过 `NODE_OPTIONS=--experimental-test-isolation=none` 传递该选项）。
+- Host：默认空列表、对已存在 Agent 的启用与禁用、启动协调、未来 Agent、事件负载与实际预设不一致时的切换、重复事件与无关设置写入下的幂等、注册中途失败的精确回滚、Agent 销毁、控制器卸载、未知与空 id、仍在激活中的 scope 延迟注册，以及真实 PTC `run_code` 程序通过 Agent scope 的 SDK 完成 search → recall。
+- Client：清单的挂载读取、刷新、读取失败、已离开清单的旧 id、缺少 Remote；草稿暂存、排序后的原子保存、重置、只读行为、两个命名空间互不干扰，以及上传命名空间缺失时只隐藏对应区域。
+
+在 Linux、Node 24.22.1 上实测：rc.5 开发图通过全部 200 项检出测试、语法/类型检查与隔离 tarball 检查（192 项安装产物测试）。运行中宿主重启、真实 GUI 验证、部署、真实 `preset-ptc` 组合与真实模型请求本次未执行；更早的隔离图没有为 0.4.0 重跑。上方压缩率表是历史测量，不是本版本重新运行的结果。
 
 ## 和官方引擎的区别
 
@@ -260,4 +285,4 @@ npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注
 - `compaction/summary` 事件携带**压缩后的条目本身**——UI 里可展开的检查点行显示的就是模型实际看到的内容，外面包一层**能自动变长的代码框**（框线永远比内容里的 ``` 长，所以含 markdown 的消息也能整齐地显示成一个代码块），检查点开头还有一段简短的使用指南，告诉模型怎么用 `recall` / `search` 找回被省略的内容。
 - 权衡：对以长对话、叙述为主的历史，检查点的信息密度可能不如 LLM 摘要（长句是截断而不是合并）。正在进行的对话有逐字保留的尾部（`retainTurns`/`retainTokens`）兜底，其余持久事件内容都能通过 `(seq N)` 指针 + recall 找回；被 spill 替换为 preview 的 PTC dispatch 记录例外。
 
-代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 引入本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；0.3.0 继续保留该图标与导出。配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。
+代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 引入本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；0.4.0 继续保留该图标与导出，并在 tool、command、settings 之外新增 `preset-tools` 图标子路径。配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。

@@ -78,10 +78,16 @@ vm.runInNewContext(readFileSync(require.resolve("dsh-compaction-instant/client")
   window: { __ModuleLoader__: { load: definition => definitions.push(definition) } },
 });
 assert.ok(definitions.some(definition => definition.id === "dsh-compaction-instant"));
-assert.ok(readFileSync(new URL(pkg.dsh.bundle.patch, "file:" + pkgPath), "utf8").includes("dsh-compaction-instant/tool"));
+const bundlePatch = readFileSync(new URL(pkg.dsh.bundle.patch, "file:" + pkgPath), "utf8");
+const patchRows = bundlePatch.split(String.fromCharCode(10)).map((line) => line.trim());
+assert.ok(patchRows.includes("name: dsh-compaction-instant/preset-tools"), "bundle patch installs the preset controller");
+// Companions are Agent-scoped now: a global tool/command row would reintroduce
+// the unconditional inheritance this release removes.
+assert.ok(!patchRows.includes("name: dsh-compaction-instant/tool"), "bundle patch installs no global recall tool row");
+assert.ok(!patchRows.includes("name: dsh-compaction-instant/command"), "bundle patch installs no global recall command row");
 const icon = readFileSync(join(dirname(pkgPath), pkg.icon), "utf8");
 assert.equal(icon, ${JSON.stringify(readFileSync(join(root, manifest.icon), "utf8"))});
-for (const entry of ["tool", "command", "settings"]) {
+for (const entry of ["tool", "command", "settings", "preset-tools"]) {
   assert.equal(readFileSync(require.resolve(pkg.name + "/" + entry + "/icon"), "utf8"), icon);
 }
 assert.equal(readFileSync(join(dirname(pkgPath), "assets/LICENSE.lucide"), "utf8"), ${JSON.stringify(readFileSync(join(root, "assets/LICENSE.lucide"), "utf8"))});

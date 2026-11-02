@@ -1,13 +1,21 @@
 /**
- * Browser half of dsh-compaction-instant: the bundle's configuration section
- * on the 0.2.0 Plugins page (`plugins.bundle.config`, keyed by the package
- * name), bound to the `compaction-instant` settings form served from the
- * bundle's bridge row (src/settings.js).
+ * Browser half of dsh-compaction-instant: the bundle's two configuration
+ * sections on the 0.2.0 Plugins page (`plugins.bundle.config`, keyed by the
+ * package name).
+ *
+ * - The engine fields bind to the `compaction-instant` settings form served by
+ *   the bundle's settings bridge row (src/settings.js).
+ * - The recall-companion section binds to the `compaction-instant-preset-tools`
+ *   form served by the preset controller row (src/preset-tools.js). It lists
+ *   the live preset roster through the optional `remote.agentPresets` namespace
+ *   and persists the enabled set; the Host controller owns the actual
+ *   registration on each Agent scope, so nothing here touches an Agent.
  *
  * DSH 0.2.0 serves volatile profile-entry configs as settings forms; edits go
  * through the client `configForms` service and persist into the profile
- * patch, applying live. The section registers only while the Host serves the
- * namespace, so a deployment without the bridge row shows no trace of it.
+ * patch, applying live. Each section appears only while the Host serves its
+ * own namespace, and the two namespaces keep independent drafts, saves, and
+ * errors: a deployment without the preset-tools row hides that area only.
  *
  * This file is served verbatim by the deployment's client-modules bundle
  * route, so it must be a self-contained lazy-CJS factory in the
@@ -58,8 +66,18 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     ".dsci_invalid{color:var(--dsw-alias-label-error);margin:0;font-size:12px;line-height:1.5}",
     ".dsci_hint{color:var(--dsw-alias-label-tertiary);margin:0;font-size:12px;line-height:1.5}",
     ".dsci_toggleRow{align-items:center;gap:10px;display:flex}",
-    ".dsci_toggle{accent-color:var(--dsw-alias-brand-primary);width:16px;height:16px;cursor:pointer}",
-    ".dsci_toggle:disabled{cursor:default}"
+    ".dsci_toggle{accent-color:var(--dsw-alias-brand-primary);width:16px;height:16px;cursor:pointer;margin:2px 0 0;flex:none}",
+    ".dsci_toggle:disabled{cursor:default}",
+    ".dsci_section{border-top:1px solid var(--dsw-alias-border-l2);flex-direction:column;margin-top:18px;padding-top:14px;display:flex}",
+    ".dsci_presets{flex-direction:column;display:flex;padding:8px 0 0}",
+    ".dsci_preset{align-items:flex-start;gap:10px;display:flex;padding:6px 0}",
+    ".dsci_presetBody{cursor:pointer;min-width:0;flex-direction:column;gap:2px;display:flex;flex:1}",
+    ".dsci_presetName{color:var(--dsw-alias-label-primary);font-size:13px;font-weight:500;line-height:1.5;overflow-wrap:anywhere}",
+    ".dsci_presetId{color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;line-height:1.5;overflow-wrap:anywhere}",
+    ".dsci_presetMeta{align-items:center;gap:8px;display:inline-flex;flex-wrap:wrap;margin-top:2px}",
+    ".dsci_presetBroken{color:var(--dsw-alias-label-error);font-size:11px;line-height:1.5}",
+    ".dsci_presetMissing{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:1.5}",
+    ".dsci_presetFooter{margin-top:10px}"
   ].join("");
   var tagId = "dsh-compaction-instant/settings.css";
   if (typeof document !== "undefined" && document.querySelector("style[data-plugin-css=" + JSON.stringify(tagId) + "]") === null) {
@@ -94,7 +112,21 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     saving: "保存中…",
     saveFailed: "保存失败",
     discard: "放弃",
-    readOnly: "当前连接为只读，无法修改配置。"
+    readOnly: "当前连接为只读，无法修改配置。",
+    presetsTitle: "历史恢复工具",
+    presetsDescription: "为所选预设的 Agent 注册 recall、search 两个模型工具与 /recall 命令。默认不向任何预设注册。",
+    presetsHint: "保存只记录目标预设，由 Host 按各 Agent 实际使用的预设即时注册或注销；已开始的调用不会中断。",
+    presetsDefault: "默认",
+    presetsBroken: "不可用",
+    presetsMissing: "当前不可用",
+    presetsEmpty: "当前没有可选的预设。",
+    presetsLoading: "正在读取预设列表…",
+    presetsReadFailed: "预设列表读取失败",
+    presetsUnavailable: "当前连接无法读取预设列表；已保存的选择仍可取消。",
+    presetsRefresh: "刷新列表",
+    presetsRefreshing: "刷新中…",
+    presetsResetAll: "重置",
+    presetsSaveFailed: "保存失败"
   };
   var en = {
     title: "Instant Compaction",
@@ -118,7 +150,21 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     saving: "Saving…",
     saveFailed: "Save failed",
     discard: "Discard",
-    readOnly: "This connection is read-only."
+    readOnly: "This connection is read-only.",
+    presetsTitle: "History recall tools",
+    presetsDescription: "Registers the recall and search model tools plus the /recall command for Agents on the selected presets. Nothing is registered until a preset is selected here.",
+    presetsHint: "Saving records the target presets; the Host registers or releases each Agent as it runs. Calls that already started are never interrupted.",
+    presetsDefault: "Default",
+    presetsBroken: "Unavailable",
+    presetsMissing: "Currently unavailable",
+    presetsEmpty: "No presets are available right now.",
+    presetsLoading: "Reading the preset list…",
+    presetsReadFailed: "Could not read the preset list",
+    presetsUnavailable: "This connection cannot read the preset list; saved selections can still be removed.",
+    presetsRefresh: "Refresh list",
+    presetsRefreshing: "Refreshing…",
+    presetsResetAll: "Reset",
+    presetsSaveFailed: "Save failed"
   };
 
   // ── field specs ───────────────────────────────────────────────────────────
@@ -305,6 +351,312 @@ function makeInstantCompactionClientFactory(bundlePackage) {
     return CardController;
   })();
 
+  // ── preset-companion form model ───────────────────────────────────────────
+  /** Settings namespace of the Host preset controller (src/preset-tools.js). */
+  var PRESET_SETTINGS_NAMESPACE = "compaction-instant-preset-tools";
+
+  /** Sorted, deduplicated string ids of a section value. */
+  function readIds(value) {
+    if (!Array.isArray(value)) return [];
+    var ids = [];
+    for (var index = 0; index < value.length; index += 1) {
+      var entry = value[index];
+      if (typeof entry === "string" && entry !== "" && ids.indexOf(entry) < 0) ids.push(entry);
+    }
+    return ids.sort();
+  }
+
+  /** Whether two id collections hold exactly the same ids. */
+  function sameIds(left, right) {
+    var a = readIds(left);
+    var b = readIds(right);
+    if (a.length !== b.length) return false;
+    for (var index = 0; index < a.length; index += 1) if (a[index] !== b[index]) return false;
+    return true;
+  }
+
+  /** Whether a stored user layer carries the field. */
+  function hasField(layer, field) {
+    return layer !== null && typeof layer === "object" && Object.prototype.hasOwnProperty.call(layer, field);
+  }
+
+  /** Human-readable text for a Remote failure or a transport error. */
+  function failureText(value) {
+    if (value === null || value === void 0) return "";
+    if (typeof value === "string") return value;
+    var failure = typeof value === "object" && value.error !== void 0 ? value.error : value;
+    if (failure !== null && typeof failure === "object" && typeof failure.message === "string") return failure.message;
+    if (typeof failure === "string") return failure;
+    return "";
+  }
+
+  /**
+   * The optional preset roster namespace. A deployment without the Remote
+   * assembly still shows saved selections but hides the roster; the engine
+   * form never depends on it.
+   */
+  function rosterSource(ctx) {
+    var remote;
+    try {
+      remote = typeof ctx.get === "function" ? ctx.get("remote") : void 0;
+    } catch (_) {
+      return void 0;
+    }
+    if (remote === null || typeof remote !== "object") return void 0;
+    var agentPresets = remote.agentPresets;
+    if (agentPresets === null || typeof agentPresets !== "object" || typeof agentPresets.list !== "function") return void 0;
+    return agentPresets;
+  }
+
+  /**
+   * Stages the enabled-preset selection over the preset-tools settings
+   * namespace. Independent from the engine card: its own draft, save, discard,
+   * reset, roster read, and error state. The Host controller is what actually
+   * registers or releases the companions; this class only writes the target
+   * list and shows what the Host serves.
+   */
+  var PresetToolsController = /** @class */ (function () {
+    function PresetToolsController(ctx, scope) {
+      this.ctx = ctx;
+      this.scope = scope;
+      /** Explicit working selection; null means "follow the saved value". */
+      this.draft = null;
+      this.listeners = new Set();
+      this.saving = false;
+      this.failed = false;
+      this.refreshing = false;
+      this.mounted = false;
+      this.roster = { status: "idle", presets: [], error: null, loaded: false };
+      this.unsubscribe = scope.subscribe(this.publish.bind(this));
+    }
+    /** Release the form subscription when the client fiber unloads. */
+    PresetToolsController.prototype.dispose = function () {
+      this.unsubscribe();
+      this.listeners.clear();
+    };
+    /** Build the snapshot store the slot's `usePresetTools` selector reads. */
+    PresetToolsController.prototype.bind = function (project) {
+      var store = createSnapshotStore(project());
+      this.listeners.add(function () { store.set(project()); });
+      return store;
+    };
+    PresetToolsController.prototype.publish = function () {
+      var listeners = Array.from(this.listeners);
+      for (var index = 0; index < listeners.length; index += 1) {
+        try { listeners[index](); } catch (_) { /* a failing projection must not kill the form */ }
+      }
+    };
+    PresetToolsController.prototype.snapshot = function () {
+      return this.scope.getSnapshot();
+    };
+    /** Enabled ids as the Host currently serves them. */
+    PresetToolsController.prototype.saved = function () {
+      var value = this.snapshot().value;
+      return readIds(value === null || value === void 0 ? void 0 : value.presets);
+    };
+    /** Whether the user layer stores the field, so a reset has something to unset. */
+    PresetToolsController.prototype.stored = function () {
+      return hasField(this.snapshot().user, "presets");
+    };
+    /** The selection the checkboxes show. */
+    PresetToolsController.prototype.selection = function () {
+      return this.draft === null ? this.saved() : this.draft;
+    };
+    /** Whether this connection may stage and write the enabled list. */
+    PresetToolsController.prototype.writable = function () {
+      var snapshot = this.snapshot();
+      return snapshot.status === "ready" && snapshot.writable === true;
+    };
+    PresetToolsController.prototype.shell = function () {
+      var snapshot = this.snapshot();
+      var available = snapshot.status === "ready";
+      return {
+        available: available,
+        writable: this.writable(),
+        dirty: this.draft !== null && !sameIds(this.draft, this.saved()),
+        saving: this.saving,
+        failed: this.failed,
+        refreshing: this.refreshing,
+        resettable: this.draft !== null || this.stored() || this.saved().length > 0,
+        rosterStatus: this.roster.status,
+        rosterError: this.roster.error,
+        rosterLoaded: this.roster.loaded
+      };
+    };
+    /**
+     * Roster rows plus saved ids the roster no longer declares. A failed read
+     * keeps the last successful roster and never turns "unknown" into "gone":
+     * absent ids are labelled unavailable only after one successful read.
+     */
+    PresetToolsController.prototype.rows = function () {
+      var saved = this.saved();
+      var selection = new Set(this.selection());
+      var seen = new Set();
+      var rows = [];
+      var roster = this.roster.presets;
+      for (var index = 0; index < roster.length; index += 1) {
+        var entry = roster[index];
+        if (entry === null || typeof entry !== "object" || typeof entry.id !== "string" || entry.id === "") continue;
+        if (seen.has(entry.id)) continue;
+        seen.add(entry.id);
+        var broken = typeof entry.broken === "string" && entry.broken.length > 0 ? entry.broken : void 0;
+        var checked = selection.has(entry.id);
+        rows.push({
+          id: entry.id,
+          name: typeof entry.name === "string" && entry.name.length > 0 ? entry.name : void 0,
+          isDefault: entry.isDefault === true,
+          broken: broken,
+          missing: false,
+          checked: checked,
+          locked: broken !== void 0 && !checked
+        });
+      }
+      var known = saved.concat(this.draft === null ? [] : this.draft);
+      var extras = [];
+      for (var knownIndex = 0; knownIndex < known.length; knownIndex += 1) {
+        var id = known[knownIndex];
+        if (typeof id !== "string" || id === "" || seen.has(id)) continue;
+        seen.add(id);
+        extras.push(id);
+      }
+      extras.sort();
+      for (var extraIndex = 0; extraIndex < extras.length; extraIndex += 1) {
+        rows.push({
+          id: extras[extraIndex],
+          name: void 0,
+          isDefault: false,
+          broken: void 0,
+          missing: this.roster.loaded,
+          checked: selection.has(extras[extraIndex]),
+          locked: false
+        });
+      }
+      return rows;
+    };
+    /** Change one draft entry; a draft equal to the served value disappears. */
+    PresetToolsController.prototype.toggle = function (id, checked) {
+      if (typeof id !== "string" || id === "" || !this.writable()) return;
+      var selection = new Set(this.selection());
+      if (checked === true) selection.add(id);
+      else selection.delete(id);
+      var next = Array.from(selection).sort();
+      this.draft = sameIds(next, this.saved()) ? null : next;
+      this.failed = false;
+      this.publish();
+    };
+    PresetToolsController.prototype.actions = function () {
+      var self = this;
+      return {
+        togglePreset: function (id, checked) { self.toggle(id, checked); },
+        savePresets: function () { self.save(); },
+        discardPresets: function () { self.discard(); },
+        resetPresets: function () { self.reset(); },
+        refreshPresets: function () { self.refresh(); }
+      };
+    };
+    /** Read the roster once when the page first mounts, outside any render. */
+    PresetToolsController.prototype.mount = function () {
+      if (this.mounted) return;
+      this.mounted = true;
+      if (this.roster.status !== "idle" && this.roster.status !== "unavailable") return;
+      var self = this;
+      Promise.resolve().then(function () { self.refresh(); });
+    };
+    PresetToolsController.prototype.discard = function () {
+      if (this.draft === null && !this.failed) return;
+      this.draft = null;
+      this.failed = false;
+      this.publish();
+    };
+    /** Persist the sorted draft as one presets array, then re-read acceptance. */
+    PresetToolsController.prototype.save = function () {
+      var self = this;
+      if (this.saving || this.draft === null || !this.writable()) return;
+      var plan = this.draft.slice().sort();
+      if (sameIds(plan, this.saved())) return;
+      var submitted = this.draft;
+      this.saving = true;
+      this.failed = false;
+      this.publish();
+      var expected = this.snapshot().revision;
+      this.scope.mutate([{ op: "set", path: ["presets"], value: plan }], expected).then(function (accepted) {
+        var user = self.snapshot().user;
+        var landed = accepted === true && hasField(user, "presets") && sameIds(user.presets, plan);
+        if (landed && self.draft === submitted) self.draft = null;
+        self.saving = false;
+        self.failed = !landed;
+        self.publish();
+      }, function () {
+        self.saving = false;
+        self.failed = true;
+        self.publish();
+      });
+    };
+    /** Restore the schema default by clearing the stored field. */
+    PresetToolsController.prototype.reset = function () {
+      var self = this;
+      if (this.saving || !this.writable()) return;
+      if (!this.stored()) {
+        if (this.draft === null) return;
+        this.draft = null;
+        this.failed = false;
+        this.publish();
+        return;
+      }
+      this.saving = true;
+      this.failed = false;
+      this.publish();
+      var expected = this.snapshot().revision;
+      this.scope.mutate([{ op: "unset", path: ["presets"] }], expected).then(function (accepted) {
+        var landed = accepted === true && !hasField(self.snapshot().user, "presets");
+        if (landed) self.draft = null;
+        self.saving = false;
+        self.failed = !landed;
+        self.publish();
+      }, function () {
+        self.saving = false;
+        self.failed = true;
+        self.publish();
+      });
+    };
+    /** Read the roster on demand; never on a timer, never as a config cleanup. */
+    PresetToolsController.prototype.refresh = function () {
+      var self = this;
+      if (this.refreshing) return;
+      var source = rosterSource(this.ctx);
+      if (source === void 0) {
+        this.roster = { status: "unavailable", presets: this.roster.presets, error: null, loaded: this.roster.loaded };
+        this.publish();
+        return;
+      }
+      this.refreshing = true;
+      this.roster = { status: "loading", presets: this.roster.presets, error: null, loaded: this.roster.loaded };
+      this.publish();
+      var pending;
+      try {
+        pending = Promise.resolve(source.list());
+      } catch (error) {
+        pending = Promise.reject(error);
+      }
+      pending.then(function (result) {
+        self.refreshing = false;
+        if (result !== null && typeof result === "object" && result.ok === true) {
+          var value = result.value;
+          var presets = value !== null && typeof value === "object" && Array.isArray(value.presets) ? value.presets : [];
+          self.roster = { status: "ready", presets: presets, error: null, loaded: true };
+        } else {
+          self.roster = { status: "error", presets: self.roster.presets, error: failureText(result), loaded: self.roster.loaded };
+        }
+        self.publish();
+      }, function (error) {
+        self.refreshing = false;
+        self.roster = { status: "error", presets: self.roster.presets, error: failureText(error), loaded: self.roster.loaded };
+        self.publish();
+      });
+    };
+    return PresetToolsController;
+  })();
+
   // ── components ────────────────────────────────────────────────────────────
   function ValueField(props) {
     return React.createElement(
@@ -382,118 +734,253 @@ function makeInstantCompactionClientFactory(bundlePackage) {
   }
 
   /**
-   * Render the bundle's configuration section on its Plugins detail page;
-   * nothing while the Host serves no instant-compaction form.
+   * One preset row: a native checkbox plus its associated label, with the
+   * default marker, a broken reason, or the "currently unavailable" note.
+   */
+  function PresetRow(props) {
+    var row = props.row;
+    var label = row.name === void 0 ? row.id : row.name;
+    return React.createElement(
+      "div",
+      { className: "dsci_preset", "data-preset-id": row.id },
+      React.createElement("input", {
+        id: props.id,
+        className: "dsci_toggle",
+        type: "checkbox",
+        checked: row.checked === true,
+        disabled: props.disabled,
+        "aria-describedby": props.id + "-meta",
+        onChange: function (event) { props.onToggle(row.id, event.target.checked); }
+      }),
+      React.createElement(
+        "label",
+        { className: "dsci_presetBody", htmlFor: props.id },
+        React.createElement("span", { className: "dsci_presetName" }, label),
+        row.name === void 0 ? null : React.createElement("span", { className: "dsci_presetId" }, row.id),
+        React.createElement(
+          "span",
+          { className: "dsci_presetMeta", id: props.id + "-meta" },
+          row.isDefault ? React.createElement("span", { className: "dsci_badge" }, props.defaultLabel) : null,
+          row.broken === void 0 ? null : React.createElement("span", { className: "dsci_presetBroken" }, props.brokenLabel + ": " + row.broken),
+          row.missing ? React.createElement("span", { className: "dsci_presetMissing" }, props.missingLabel) : null
+        )
+      )
+    );
+  }
+
+  /**
+   * The preset-scoped recall-companion area: roster checkboxes, refresh, reset,
+   * and its own save/discard pair. Renders nothing while the Host serves no
+   * preset-tools form.
+   */
+  function PresetToolsSection(props) {
+    var state = props.state;
+    var t = props.t;
+    if (!state.available) return null;
+    var rows = Array.isArray(state.rows) ? state.rows : [];
+    var children = [
+      React.createElement("span", { className: "dsci_name", key: "title" }, t("presetsTitle")),
+      React.createElement("p", { className: "dsci_description", key: "description" }, t("presetsDescription"))
+    ];
+    if (state.rosterStatus === "loading") {
+      children.push(React.createElement("p", { className: "dsci_hint", key: "roster-loading", role: "status" }, t("presetsLoading")));
+    }
+    if (state.rosterStatus === "error") {
+      var detail = typeof state.rosterError === "string" && state.rosterError.length > 0 ? ": " + state.rosterError : "";
+      children.push(React.createElement("p", { className: "dsci_failed", key: "roster-error", role: "status" }, t("presetsReadFailed") + detail));
+    }
+    if (state.rosterStatus === "unavailable") {
+      children.push(React.createElement("p", { className: "dsci_hint", key: "roster-unavailable", role: "status" }, t("presetsUnavailable")));
+    }
+    if (rows.length === 0 && state.rosterStatus === "ready") {
+      children.push(React.createElement("p", { className: "dsci_hint", key: "roster-empty" }, t("presetsEmpty")));
+    }
+    var list = rows.map(function (row, index) {
+      return React.createElement(PresetRow, {
+        key: row.id,
+        id: "plugin-config-preset-" + String(index),
+        row: row,
+        disabled: !state.writable || row.locked === true,
+        defaultLabel: t("presetsDefault"),
+        brokenLabel: t("presetsBroken"),
+        missingLabel: t("presetsMissing"),
+        onToggle: props.togglePreset
+      });
+    });
+    children.push(React.createElement("div", { className: "dsci_presets", key: "list" }, ...list));
+    children.push(React.createElement("p", { className: "dsci_hint", key: "hint" }, t("presetsHint")));
+    children.push(React.createElement(
+      "div",
+      { className: "dsci_footer dsci_presetFooter", key: "footer" },
+      state.failed ? React.createElement("p", { className: "dsci_failed", role: "status" }, t("presetsSaveFailed")) : null,
+      React.createElement("button", {
+        type: "button",
+        className: "dsci_discard",
+        disabled: state.refreshing || state.saving,
+        onClick: props.refreshPresets
+      }, t(state.refreshing ? "presetsRefreshing" : "presetsRefresh")),
+      React.createElement("button", {
+        type: "button",
+        className: "dsci_discard",
+        disabled: !state.writable || !state.resettable || state.saving,
+        onClick: props.resetPresets
+      }, t("presetsResetAll")),
+      React.createElement("button", {
+        type: "button",
+        className: "dsci_discard",
+        disabled: !state.dirty || state.saving,
+        onClick: props.discardPresets
+      }, t("discard")),
+      React.createElement("button", {
+        type: "button",
+        className: "dsci_save",
+        disabled: !state.writable || !state.dirty || state.saving,
+        onClick: props.savePresets
+      }, t(state.saving ? "saving" : "save"))
+    ));
+    return React.createElement("div", { className: "dsci_section" }, ...children);
+  }
+
+  /**
+   * Render the bundle's configuration section on its Plugins detail page.
+   * The engine form and the preset-companion form are independent: each shows
+   * only while its own Host namespace is served, and a failure in one never
+   * hides or blocks the other.
    */
   function CompactionConfigPage(props) {
     var state = props.useCompactionCard(function (snapshot) { return snapshot; });
+    var tools = typeof props.usePresetTools === "function" ? props.usePresetTools(function (snapshot) { return snapshot; }) : void 0;
     var t = props.t;
     if (props.view === "summary") return t("description");
-    if (!state.available) return null;
+    var engineVisible = state !== null && state !== void 0 && state.available === true;
+    var toolsVisible = tools !== null && tools !== void 0 && tools.available === true;
+    if (!engineVisible && !toolsVisible) return null;
+    var readOnly = (engineVisible && !state.writable) || (toolsVisible && !tools.writable);
     var blocked = !state.dirty || state.invalid || state.saving;
     var ratioMode = state.retainRatio.text !== "" && state.retainTokens.text === "";
-    return React.createElement(
-      "div",
-      { className: "dsci_page" },
-      React.createElement("span", { className: "dsci_name" }, t("title")),
-      React.createElement("p", { className: "dsci_description" }, t("description")),
-      !state.writable ? React.createElement("p", { className: "dsci_readOnly", role: "status" }, t("readOnly")) : null,
-            React.createElement(ValueField, {
-              id: "plugin-config-instant-cap",
-              label: t("checkpointCap"),
-              hint: t("checkpointCapHint"),
+    var children = [
+      React.createElement("span", { className: "dsci_name", key: "title" }, t("title")),
+      React.createElement("p", { className: "dsci_description", key: "description" }, t("description")),
+      readOnly ? React.createElement("p", { className: "dsci_readOnly", key: "readOnly", role: "status" }, t("readOnly")) : null
+    ];
+    if (engineVisible) {
+      children.push(
+        React.createElement(ValueField, {
+          key: "checkpointCap",
+          id: "plugin-config-instant-cap",
+          label: t("checkpointCap"),
+          hint: t("checkpointCapHint"),
+          overriddenLabel: t("overridden"),
+          resetLabel: t("reset"),
+          invalidLabel: t("invalidNumber"),
+          numeric: true,
+          disabled: !state.writable,
+          ...state.checkpointCap,
+          onEdit: function (text) { props.edit("checkpointCap", text); },
+          onReset: function () { props.resetField("checkpointCap"); }
+        }),
+        React.createElement(ToggleField, {
+          key: "auto",
+          id: "plugin-config-instant-auto",
+          label: t("auto"),
+          hint: t("autoHint"),
+          overriddenLabel: t("overridden"),
+          resetLabel: t("reset"),
+          checked: state.auto.text === "true",
+          overridden: state.auto.overridden,
+          disabled: !state.writable,
+          onToggle: function (checked) { props.edit("auto", checked ? "true" : "false"); },
+          onReset: function () { props.resetField("auto"); }
+        }),
+        React.createElement(ValueField, {
+          key: "thresholdRatio",
+          id: "plugin-config-instant-threshold",
+          label: t("thresholdRatio"),
+          hint: t("thresholdRatioHint"),
+          overriddenLabel: t("overridden"),
+          resetLabel: t("reset"),
+          invalidLabel: t("invalidNumber"),
+          numeric: true,
+          disabled: !state.writable,
+          ...state.thresholdRatio,
+          onEdit: function (text) { props.edit("thresholdRatio", text); },
+          onReset: function () { props.resetField("thresholdRatio"); }
+        }),
+        React.createElement(ValueField, {
+          key: "retainTurns",
+          id: "plugin-config-instant-retain-turns",
+          label: t("retainTurns"),
+          hint: t("retainTurnsHint"),
+          overriddenLabel: t("overridden"),
+          resetLabel: t("reset"),
+          invalidLabel: t("invalidNumber"),
+          numeric: true,
+          disabled: !state.writable,
+          ...state.retainTurns,
+          onEdit: function (text) { props.edit("retainTurns", text); },
+          onReset: function () { props.resetField("retainTurns"); }
+        }),
+        ratioMode
+          ? React.createElement(ValueField, {
+              key: "retainRatio",
+              id: "plugin-config-instant-retain-ratio",
+              label: t("retainRatio"),
+              hint: t("retainRatioHint"),
               overriddenLabel: t("overridden"),
               resetLabel: t("reset"),
               invalidLabel: t("invalidNumber"),
               numeric: true,
               disabled: !state.writable,
-              ...state.checkpointCap,
-              onEdit: function (text) { props.edit("checkpointCap", text); },
-              onReset: function () { props.resetField("checkpointCap"); }
-            }),
-            React.createElement(ToggleField, {
-              id: "plugin-config-instant-auto",
-              label: t("auto"),
-              hint: t("autoHint"),
-              overriddenLabel: t("overridden"),
-              resetLabel: t("reset"),
-              checked: state.auto.text === "true",
-              overridden: state.auto.overridden,
-              disabled: !state.writable,
-              onToggle: function (checked) { props.edit("auto", checked ? "true" : "false"); },
-              onReset: function () { props.resetField("auto"); }
-            }),
-            React.createElement(ValueField, {
-              id: "plugin-config-instant-threshold",
-              label: t("thresholdRatio"),
-              hint: t("thresholdRatioHint"),
+              ...state.retainRatio,
+              onEdit: function (text) { props.edit("retainRatio", text); },
+              onReset: function () { props.resetField("retainRatio"); }
+            })
+          : React.createElement(ValueField, {
+              key: "retainTokens",
+              id: "plugin-config-instant-retain-tokens",
+              label: t("retainTokens"),
+              hint: t("retainTokensHint"),
               overriddenLabel: t("overridden"),
               resetLabel: t("reset"),
               invalidLabel: t("invalidNumber"),
               numeric: true,
               disabled: !state.writable,
-              ...state.thresholdRatio,
-              onEdit: function (text) { props.edit("thresholdRatio", text); },
-              onReset: function () { props.resetField("thresholdRatio"); }
+              ...state.retainTokens,
+              onEdit: function (text) { props.edit("retainTokens", text); },
+              onReset: function () { props.resetField("retainTokens"); }
             }),
-            React.createElement(ValueField, {
-              id: "plugin-config-instant-retain-turns",
-              label: t("retainTurns"),
-              hint: t("retainTurnsHint"),
-              overriddenLabel: t("overridden"),
-              resetLabel: t("reset"),
-              invalidLabel: t("invalidNumber"),
-              numeric: true,
-              disabled: !state.writable,
-              ...state.retainTurns,
-              onEdit: function (text) { props.edit("retainTurns", text); },
-              onReset: function () { props.resetField("retainTurns"); }
-            }),
-            ratioMode
-              ? React.createElement(ValueField, {
-                  id: "plugin-config-instant-retain-ratio",
-                  label: t("retainRatio"),
-                  hint: t("retainRatioHint"),
-                  overriddenLabel: t("overridden"),
-                  resetLabel: t("reset"),
-                  invalidLabel: t("invalidNumber"),
-                  numeric: true,
-                  disabled: !state.writable,
-                  ...state.retainRatio,
-                  onEdit: function (text) { props.edit("retainRatio", text); },
-                  onReset: function () { props.resetField("retainRatio"); }
-                })
-              : React.createElement(ValueField, {
-                  id: "plugin-config-instant-retain-tokens",
-                  label: t("retainTokens"),
-                  hint: t("retainTokensHint"),
-                  overriddenLabel: t("overridden"),
-                  resetLabel: t("reset"),
-                  invalidLabel: t("invalidNumber"),
-                  numeric: true,
-                  disabled: !state.writable,
-                  ...state.retainTokens,
-                  onEdit: function (text) { props.edit("retainTokens", text); },
-                  onReset: function () { props.resetField("retainTokens"); }
-                }),
-            React.createElement(
-              "div",
-              { className: "dsci_footer" },
-              state.failed ? React.createElement("p", { className: "dsci_failed", role: "status" }, t("saveFailed")) : null,
-              React.createElement("button", {
-                type: "button",
-                className: "dsci_discard",
-                disabled: !state.dirty || state.saving,
-                onClick: props.discard
-              }, t("discard")),
-              React.createElement("button", {
-                type: "button",
-                className: "dsci_save",
-                disabled: blocked,
-                onClick: props.save
-              }, t(state.saving ? "saving" : "save"))
-            )
-    );
+        React.createElement(
+          "div",
+          { className: "dsci_footer", key: "engine-footer" },
+          state.failed ? React.createElement("p", { className: "dsci_failed", role: "status" }, t("saveFailed")) : null,
+          React.createElement("button", {
+            type: "button",
+            className: "dsci_discard",
+            disabled: !state.dirty || state.saving,
+            onClick: props.discard
+          }, t("discard")),
+          React.createElement("button", {
+            type: "button",
+            className: "dsci_save",
+            disabled: blocked,
+            onClick: props.save
+          }, t(state.saving ? "saving" : "save"))
+        )
+      );
+    }
+    if (toolsVisible) {
+      children.push(React.createElement(PresetToolsSection, {
+        key: "presets",
+        state: tools,
+        t: t,
+        togglePreset: props.togglePreset,
+        savePresets: props.savePresets,
+        discardPresets: props.discardPresets,
+        resetPresets: props.resetPresets,
+        refreshPresets: props.refreshPresets
+      }));
+    }
+    return React.createElement("div", { className: "dsci_page" }, ...children);
   }
 
   // ── plugin body ───────────────────────────────────────────────────────────
@@ -515,6 +1002,7 @@ function makeInstantCompactionClientFactory(bundlePackage) {
       numberField("retainRatio"),
       numberField("retainTokens")
     ]);
+    var presetController = new PresetToolsController(ctx, ctx.configForms.get(PRESET_SETTINGS_NAMESPACE));
     var store = controller.bind(function () {
       var shell = controller.shell();
       return {
@@ -527,21 +1015,29 @@ function makeInstantCompactionClientFactory(bundlePackage) {
         retainTokens: controller.field("retainTokens")
       };
     });
-    ctx.effect(function () { return function () { controller.dispose(); }; }, "compaction-instant: form subscription");
-    // The Plugins page owns the slot; the bridge row owns the namespace. Both
-    // must be live before the section registers, so a deployment without the
-    // bundle (or with its bridge row switched off) shows no trace of it.
+    var presetStore = presetController.bind(function () {
+      return {
+        ...presetController.shell(),
+        rows: presetController.rows()
+      };
+    });
+    ctx.effect(function () { return function () { controller.dispose(); presetController.dispose(); }; }, "compaction-instant: form subscriptions");
+    // The Plugins page owns the slot; the bridge and controller rows own the
+    // namespaces. Each area appears only once its own namespace is served, so
+    // a deployment with either row switched off keeps the other area.
     ctx.effect(function () {
-      return ctx.configForms.whileServed([SETTINGS_NAMESPACE], function () {
+      return ctx.configForms.whileServed([SETTINGS_NAMESPACE, PRESET_SETTINGS_NAMESPACE], function () {
         return ctx.slots.inject("plugins.bundle.config", function () {
           return ctx.slots.register({
             name: "plugins.bundle.config",
             key: bundlePackage,
             locale: NS,
             inject: function () {
+              presetController.mount();
               return {
-                hooks: { compactionCard: store },
-                ...controller.actions()
+                hooks: { compactionCard: store, presetTools: presetStore },
+                ...controller.actions(),
+                ...presetController.actions()
               };
             }
           }, CompactionConfigPage);

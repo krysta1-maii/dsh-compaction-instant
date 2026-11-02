@@ -12,7 +12,7 @@ const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta
 const readInstalledManifest = (name) => JSON.parse(readFileSync(require.resolve(name + "/package.json"), "utf8"));
 
 test("release metadata targets the exact DSH 0.2.1 development graph", () => {
-  assert.equal(pkg.version, "0.3.0");
+  assert.equal(pkg.version, "0.4.0");
   assert.equal(lock.name, pkg.name);
   assert.equal(lock.version, pkg.version);
   for (const field of ["name", "version", "dependencies", "devDependencies", "peerDependencies", "peerDependenciesMeta", "engines"]) {
@@ -28,10 +28,13 @@ test("release metadata targets the exact DSH 0.2.1 development graph", () => {
   assert.equal(pkg.dependencies["@deepseek-ai/dsh-util-values"], "^0.2.0-rc.1 || ^0.2.1-0");
   assert.equal(pkg.dependencies["@deepseek-ai/schemastery"], "^3.18.4 || ^3.18.5-0");
   assert.equal(pkg.peerDependenciesMeta["@deepseek-ai/dsh-settings"].optional, true);
+  // The controller tests drive a real scoped context, so the scope package is
+  // a pinned development dependency, never a runtime one.
+  assert.equal(pkg.devDependencies["@deepseek-ai/dsh-scope"], "0.2.1-rc.5");
 
   for (const name of Object.keys(pkg.devDependencies).filter((entry) => entry.startsWith("@deepseek-ai/dsh-"))) {
-    assert.equal(pkg.devDependencies[name], "0.2.1-rc.3", name);
-    assert.equal(readInstalledManifest(name).version, "0.2.1-rc.3", name);
+    assert.equal(pkg.devDependencies[name], "0.2.1-rc.5", name);
+    assert.equal(readInstalledManifest(name).version, "0.2.1-rc.5", name);
   }
   assert.equal(readInstalledManifest("@deepseek-ai/cordis").version, "4.0.5");
   assert.equal(readInstalledManifest("@deepseek-ai/schemastery").version, "3.18.5");
@@ -45,7 +48,7 @@ test("plugin icons are local, licensed and shared by the companion entries", () 
   assert.ok(Buffer.byteLength(icon) <= 256 * 1024);
   assert.match(icon, /<svg[^>]+viewBox="0 0 64 64"/u);
   assert.doesNotMatch(icon, /<script|<foreignObject|(?:href|src)=/iu);
-  for (const entry of ["tool", "command", "settings"]) {
+  for (const entry of ["tool", "command", "settings", "preset-tools"]) {
     assert.equal(pkg.exports["./" + entry + "/icon"], pkg.icon);
     assert.equal(readFileSync(require.resolve(pkg.name + "/" + entry + "/icon"), "utf8"), icon);
   }
@@ -195,13 +198,19 @@ test("client saves cross-field settings in one atomic mutation", async () => {
   assert.deepEqual(snapshot.user, { thresholdRatio: 0.15, retainRatio: 0.1 });
 });
 
-test("bundle installs recall companions, the settings bridge and the inert client carrier", () => {
+test("bundle installs the preset controller, the settings bridge and the inert client carrier", () => {
   const patch = readFileSync(new URL("../cordis.patch.yml", import.meta.url), "utf8");
-  assert.match(patch, /dsh-compaction-instant\/tool/u);
-  assert.match(patch, /dsh-compaction-instant\/command/u);
+  // The Host-global companion rows are gone: companions are registered per
+  // Agent scope by the controller row, and only for enabled presets.
+  assert.doesNotMatch(patch, /^\s*name:\s*dsh-compaction-instant\/tool\s*$/mu);
+  assert.doesNotMatch(patch, /^\s*name:\s*dsh-compaction-instant\/command\s*$/mu);
+  assert.doesNotMatch(patch, /^\s*- id:\s*tool-recall\s*$/mu);
+  assert.doesNotMatch(patch, /^\s*- id:\s*command-recall\s*$/mu);
+  assert.match(patch, /^\s*name:\s*dsh-compaction-instant\/preset-tools\s*$/mu);
   assert.match(patch, /dsh-compaction-instant\/settings/u);
-  // The bridge row ids the served settings namespace.
+  // Each bridge row id is the namespace it serves.
   assert.match(patch, /^\s*- id:\s*compaction-instant\s*$/mu);
+  assert.match(patch, /^\s*- id:\s*compaction-instant-preset-tools\s*$/mu);
   // The client-carrier row names the bare package — dsh-client-modules binds
   // the browser half to exactly that specifier — but stays inert, so no
   // profile-level engine races the preset-owned backend.

@@ -1,6 +1,6 @@
 {
   "name": "dsh-compaction-instant",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "icon": "./assets/icon.svg",
   "description": "VCC-style instant, near-lossless deterministic compaction backend for DeepSeek Harness 0.2.0",
   "type": "module",
@@ -39,10 +39,15 @@
       "types": "./types/settings.d.ts",
       "default": "./src/settings.js"
     },
+    "./preset-tools": {
+      "types": "./types/preset-tools.d.ts",
+      "default": "./src/preset-tools.js"
+    },
     "./package.json": "./package.json",
     "./tool/icon": "./assets/icon.svg",
     "./command/icon": "./assets/icon.svg",
     "./settings/icon": "./assets/icon.svg",
+    "./preset-tools/icon": "./assets/icon.svg",
     "./client": {
       "default": "./src/client.js"
     }
@@ -60,7 +65,7 @@
   "scripts": {
     "test": "node --test",
     "check": "npm run check:syntax && npm run typecheck",
-    "check:syntax": "node --check src/index.js && node --check src/compiler.js && node --check src/region.js && node --check src/recall.js && node --check src/search.js && node --check src/tool.js && node --check src/ptc.js && node --check src/command.js && node --check src/settings.js && node --check src/client.js && node --check scripts/check-package.mjs",
+    "check:syntax": "node --check src/index.js && node --check src/compiler.js && node --check src/region.js && node --check src/recall.js && node --check src/search.js && node --check src/tool.js && node --check src/ptc.js && node --check src/command.js && node --check src/preset-tools.js && node --check src/settings.js && node --check src/client.js && node --check scripts/check-package.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "check:package": "node scripts/check-package.mjs"
   },
@@ -96,19 +101,20 @@
     "@deepseek-ai/dsh-tools": "^0.2.0-rc.1 || ^0.2.1-0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-agent": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-commands": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-compaction": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-ptc-runtime": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-settings": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-token-meter": "0.2.1-rc.3",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.3",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-commands": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-compaction": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-ptc-runtime": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-settings": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-token-meter": "0.2.1-rc.5",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
+    "@types/node": "^22.0.0",
     "typescript": "^5.9.2"
   },
   "peerDependenciesMeta": {

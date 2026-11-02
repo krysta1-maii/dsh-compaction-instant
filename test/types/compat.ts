@@ -102,6 +102,16 @@ import {
   name as commandName,
   resolveConfig as resolveCommandConfig,
 } from 'dsh-compaction-instant/command';
+import {
+  Config as presetToolsSchema,
+  SETTINGS_NAMESPACE as PRESET_TOOLS_NAMESPACE,
+  apply as applyPresetTools,
+  inject as presetToolsInject,
+  name as presetToolsName,
+  readServedPresets,
+  resolveConfig as resolvePresetToolsConfig,
+  type PresetToolsConfig,
+} from 'dsh-compaction-instant/preset-tools';
 
 const publicConfig: InstantCompactionConfig = { retainRatio: 0.2, thresholdRatio: 0.5 };
 const publicSettings: InstantCompactionSettings = InstantCompactionEngine.SETTINGS_SCHEMA({ retainRatio: 0.2 });
@@ -204,7 +214,12 @@ export function checkRc2Contracts(
   void [DEFAULT_ARG_TOOLS, DEFAULT_NOISE_PATTERNS, DEFAULT_TOOL_KEY_FIELDS, projectMessageText];
   void [recallTool, searchTool, TOOL_DEFAULT_MAX_RECALL_TOKENS, RECALL_DESCRIPTION, SEARCH_DESCRIPTION, toolInject, toolName];
   void [USAGE, commandInject, commandName, defineRecallCommand(resolveCommandConfig())];
+  const companionConfig: PresetToolsConfig = { presets: ['ptc'] };
+  const servedPresets: string[] | undefined = readServedPresets(undefined);
+  void [presetToolsName, presetToolsInject, PRESET_TOOLS_NAMESPACE, presetToolsSchema, companionConfig, servedPresets];
+  void resolvePresetToolsConfig(companionConfig).presets;
   applyTools(ctx);
   applyCommand(ctx);
+  applyPresetTools(ctx, companionConfig);
   void routedTarget(session);
 }

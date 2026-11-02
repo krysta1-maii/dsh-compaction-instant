@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0 — 2026-11-02
+
+### Preset-scoped recall companions
+
+- **Behavior change:** the bundle no longer installs the Host-global `tool-recall` and `command-recall` rows. `recall`, `search`, and `/recall` are registered in each Agent's own scope and only for the presets enabled on the Plugins page. The new target-state list defaults to empty, so upgrading removes the companions from every preset until a user selects one; no preset YAML has to be edited.
+- Adds the `dsh-compaction-instant/preset-tools` row (composition id `compaction-instant-preset-tools`): a volatile `presets` settings form (namespace `compaction-instant-preset-tools`) plus a Host controller that reconciles the list against `agentPresets.composedPreset(agent.ctx)`, never against a display name or an event payload.
+  - covers Agents live at mount, future `agent/created` Agents, `agent/disposed` cleanup, and `agent-preset/selected` switching before or between turns;
+  - registers or releases `recall`, `search`, and `/recall` transactionally in the nearest Agent scope with exact disposers; a registration failure rolls back the companions it created and is logged without failing Agent creation;
+  - is idempotent: an unrelated settings write, a repeated notification, or a re-selection of the same preset produces no registration churn or `tools/change` traffic;
+  - registers through `agent.ctx`, so the Agent scope unwinds the registration on disposal, and the controller's own teardown releases every Agent it still covers when the row unloads.
+- The Plugins page gains a second section on the same bundle page: the preset roster from `remote.agentPresets.list()`, name/id/default/broken/unavailable markers, checkbox selection, and independent save, discard, reset, and refresh state. A missing `remote.agentPresets`, a failed roster read, a broken preset, a preset that left the roster, and a read-only connection each degrade without touching the engine form.
+- The static `dsh-compaction-instant/tool` and `dsh-compaction-instant/command` subpaths remain exported for hand-written compositions; do not mount them for a preset that the panel also enables for the same Agent.
+- Adds `@deepseek-ai/dsh-scope` as a pinned development dependency, because the controller tests drive a real scoped context. No runtime dependency is added.
+- Documents the semantics precisely: the preset is the controller's filter, the contribution lives in the Agent scope, and an in-flight call is never cancelled by a disable.
+
+### Development baseline
+
+- Moves the default development graph from DSH **0.2.1-rc.3** to **0.2.1-rc.5** (commit **b830ec950faba0a46dda564be3e2d854afed94f1**). Peer ranges and `engines.dsh` remain unchanged. The rc.3 → rc.5 source audit found no changes to the Host APIs used by this package.
+
+### Verification
+
+- Verified on Linux / Node **24.22.1** (`npm ls --all`, syntax and strict declaration checks, all **200** checkout tests, and the isolated rc.5 tarball package check with **192** artifact tests) with a **24.19.0** cross-check of the same checkout suite (200/200).
+- Not performed for 0.4.0: installation into a live profile, GUI interaction, host restart, deployment, a real model request, and a re-run of the older 0.2.0-rc.1 / 0.2.0-rc.2 / 0.2.1-alpha.5 / 0.2.1-rc.3 graphs. The peer range is unchanged, but 0.4.0 verified rc.5 only.
+
 ## 0.3.0 — 2026-10-26
 
 ### PTC compatibility and recovery
