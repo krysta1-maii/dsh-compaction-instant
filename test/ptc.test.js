@@ -15,6 +15,7 @@ import { ToolCallId, createAssistantMessage, createToolResultMessage, createUser
 import { PtcRuntime } from "@deepseek-ai/dsh-ptc-runtime";
 import { Session, TOOL_NOT_STARTED, TOOL_OUTCOME_UNKNOWN } from "@deepseek-ai/dsh-session";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
+import * as PtcToolExecutor from "@deepseek-ai/dsh-tool-executor-ptc";
 import ToolRuntime, { RUN_CODE_NAME, defineTool } from "@deepseek-ai/dsh-tools";
 import { MAX_RECALL_ENTRIES, compileNodes, compileRegion } from "../src/compiler.js";
 import { InstantCompactionEngine } from "../src/index.js";
@@ -75,15 +76,15 @@ async function setupPtc(options = {}) {
     ensure: async () => process.cwd()
   });
   await ctx.plugin(SystemPrompt, options.toolOrder ? { toolOrder: options.toolOrder } : {});
-  await ctx.plugin(ToolRuntime, {
-    mode: options.mode ?? "ptc",
-    ...(options.maxParallelSubCalls !== undefined ? { maxParallelSubCalls: options.maxParallelSubCalls } : {})
-  });
+  await ctx.plugin(ToolRuntime, {});
   let runtime;
   if (options.runtime !== false) {
     await ctx.plugin(FakeRuntime, options.runtime ?? {});
     runtime = ctx.ptcRuntime;
   }
+  // DSH 0.2.2 moved the execution mode out of the registry: the PTC executor
+  // owns run_code, and it activates only after its ptcRuntime dependency.
+  await ctx.plugin(PtcToolExecutor, options.maxParallelSubCalls !== undefined ? { maxParallelSubCalls: options.maxParallelSubCalls } : {});
   await ctx.plugin(recallTools);
   return { ctx, tools: ctx.tools, systemPrompt: ctx.systemPrompt, runtime };
 }
@@ -105,15 +106,18 @@ function makePtcSession(id = `ptc-${++sessionSerial}`) {
 function runCode(ctx, session, code, extras = {}) {
   return ctx.tools.execute({
     signal: extras.signal ?? new AbortController().signal,
-    callId: ToolCallId(extras.callId ?? "call-1"),
-    name: RUN_CODE_NAME,
-    arguments: {
-      code,
-      description: extras.description ?? "Run the test program",
-      ...(extras.timeoutMs !== undefined ? { timeoutMs: extras.timeoutMs } : {})
-    },
+    calls: [{
+      type: "tool-call",
+      id: ToolCallId(extras.callId ?? "call-1"),
+      name: RUN_CODE_NAME,
+      arguments: JSON.stringify({
+        code,
+        description: extras.description ?? "Run the test program",
+        ...(extras.timeoutMs !== undefined ? { timeoutMs: extras.timeoutMs } : {})
+      })
+    }],
     agent: extras.agent ?? { id: session.id, session, ctx }
-  });
+  }).then((settled) => settled.results[0].result);
 }
 
 /** Read settled and start dispatch events in log order. */

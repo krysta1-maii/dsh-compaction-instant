@@ -11,33 +11,33 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
 const lock = JSON.parse(readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"));
 const readInstalledManifest = (name) => JSON.parse(readFileSync(require.resolve(name + "/package.json"), "utf8"));
 
-test("release metadata targets the exact DSH 0.2.1 development graph", () => {
-  assert.equal(pkg.version, "0.4.1");
+test("release metadata targets the exact DSH 0.2.2 development graph", () => {
+  assert.equal(pkg.version, "0.5.0");
   assert.equal(lock.name, pkg.name);
   assert.equal(lock.version, pkg.version);
   for (const field of ["name", "version", "dependencies", "devDependencies", "peerDependencies", "peerDependenciesMeta", "engines"]) {
     assert.deepEqual(lock.packages[""][field], pkg[field], "lockfile root " + field);
   }
   assert.equal(pkg.engines.node, ">=22.12.0");
-  assert.equal(pkg.engines.dsh, "^0.2.0-rc.1 || ^0.2.1-0");
+  assert.equal(pkg.engines.dsh, "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3");
   assert.equal(pkg.packageManager, "npm@9.2.0");
   for (const [name, range] of Object.entries(pkg.peerDependencies)) {
-    if (name.startsWith("@deepseek-ai/dsh-")) assert.equal(range, "^0.2.0-rc.1 || ^0.2.1-0", name);
+    if (name.startsWith("@deepseek-ai/dsh-")) assert.equal(range, "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3", name);
   }
-  assert.equal(pkg.peerDependencies["@deepseek-ai/cordis"], "^4.0.4 || ^4.0.5-0");
-  assert.equal(pkg.dependencies["@deepseek-ai/dsh-util-values"], "^0.2.0-rc.1 || ^0.2.1-0");
-  assert.equal(pkg.dependencies["@deepseek-ai/schemastery"], "^3.18.4 || ^3.18.5-0");
+  assert.equal(pkg.peerDependencies["@deepseek-ai/cordis"], "^4.0.4 || ^4.0.5-0 || ^4.0.6-alpha.2");
+  assert.equal(pkg.dependencies["@deepseek-ai/dsh-util-values"], "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3");
+  assert.equal(pkg.dependencies["@deepseek-ai/schemastery"], "^3.18.4 || ^3.18.5-0 || ^3.18.6-alpha.2");
   assert.equal(pkg.peerDependenciesMeta["@deepseek-ai/dsh-settings"].optional, true);
   // The controller tests drive a real scoped context, so the scope package is
   // a pinned development dependency, never a runtime one.
-  assert.equal(pkg.devDependencies["@deepseek-ai/dsh-scope"], "0.2.1-rc.5");
+  assert.equal(pkg.devDependencies["@deepseek-ai/dsh-scope"], "0.2.2-alpha.3");
 
   for (const name of Object.keys(pkg.devDependencies).filter((entry) => entry.startsWith("@deepseek-ai/dsh-"))) {
-    assert.equal(pkg.devDependencies[name], "0.2.1-rc.5", name);
-    assert.equal(readInstalledManifest(name).version, "0.2.1-rc.5", name);
+    assert.equal(pkg.devDependencies[name], "0.2.2-alpha.3", name);
+    assert.equal(readInstalledManifest(name).version, "0.2.2-alpha.3", name);
   }
-  assert.equal(readInstalledManifest("@deepseek-ai/cordis").version, "4.0.5");
-  assert.equal(readInstalledManifest("@deepseek-ai/schemastery").version, "3.18.5");
+  assert.equal(readInstalledManifest("@deepseek-ai/cordis").version, "4.0.6-alpha.2");
+  assert.equal(readInstalledManifest("@deepseek-ai/schemastery").version, "3.18.6-alpha.2");
 });
 
 test("plugin icons are local, licensed and shared by the companion entries", () => {

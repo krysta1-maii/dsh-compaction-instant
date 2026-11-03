@@ -1,8 +1,8 @@
 {
   "name": "dsh-compaction-instant",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "icon": "./assets/icon.svg",
-  "description": "VCC-style instant, near-lossless deterministic compaction backend for DeepSeek Harness 0.2.0",
+  "description": "VCC-style instant, near-lossless deterministic compaction backend for DeepSeek Harness 0.2.x",
   "type": "module",
   "main": "src/index.js",
   "types": "types/index.d.ts",
@@ -71,7 +71,7 @@
   },
   "engines": {
     "node": ">=22.12.0",
-    "dsh": "^0.2.0-rc.1 || ^0.2.1-0"
+    "dsh": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3"
   },
   "packageManager": "npm@9.2.0",
   "keywords": [
@@ -85,35 +85,38 @@
   ],
   "license": "MIT",
   "dependencies": {
-    "@deepseek-ai/dsh-util-values": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/schemastery": "^3.18.4 || ^3.18.5-0"
+    "@deepseek-ai/dsh-util-values": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/schemastery": "^3.18.4 || ^3.18.5-0 || ^3.18.6-alpha.2"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.4 || ^4.0.5-0",
-    "@deepseek-ai/dsh-agent": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-commands": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-compaction": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-compaction-tool-result-pruner": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-llm": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-session": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-settings": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-token-meter": "^0.2.0-rc.1 || ^0.2.1-0",
-    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1 || ^0.2.1-0"
+    "@deepseek-ai/cordis": "^4.0.4 || ^4.0.5-0 || ^4.0.6-alpha.2",
+    "@deepseek-ai/dsh-agent": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-commands": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-compaction": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-llm": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-session": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-settings": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-token-meter": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tools": "^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-agent": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-commands": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-compaction": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-ptc-runtime": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-scope": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-session": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-settings": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-token-meter": "0.2.1-rc.5",
-    "@deepseek-ai/dsh-tools": "0.2.1-rc.5",
+    "@deepseek-ai/cordis": "4.0.6-alpha.2",
+    "@deepseek-ai/dsh-agent": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-commands": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-compaction": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-compaction-tool-result-pruner": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-llm": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-ptc-runtime": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-scope": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-session": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-settings": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-system-prompt": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-token-meter": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tool-executor-native": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tool-executor-ptc": "0.2.2-alpha.3",
+    "@deepseek-ai/dsh-tools": "0.2.2-alpha.3",
+    "@deepseek-ai/schemastery": "3.18.6-alpha.2",
     "@types/node": "^22.0.0",
     "typescript": "^5.9.2"
   },

@@ -12,7 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["22.12.0", "24.x"]
+        # The 0.2.2-alpha.3 development graph requires Node >=24.9.0. The
+        # package's own code still supports Node 22 under a 0.2.1 host.
+        node: ["24.9.0", "24.x"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -15,24 +15,25 @@
 
 | dsh-compaction-instant | DeepSeek Harness | Node.js |
 |---|---|---|
-| `0.4.1` | `0.2.1-rc.5`（本版本重新验证） | `>=22.12.0` |
+| `0.5.0` | `0.2.2-alpha.3`（本版本重新验证） | `>=22.12.0` |
+| `0.4.1` | `0.2.1-rc.5`（0.4.1 验证） | `>=22.12.0` |
 | `0.3.0` | `0.2.0-rc.1`, `0.2.0-rc.2`, `0.2.1-alpha.5`, `0.2.1-rc.3`, `0.2.1-rc.5` | `>=22.12.0` |
 | `0.2.0`, `0.2.1` | `0.2.0-rc.1`, `0.2.0-rc.2` | `>=22.12.0` |
 | `0.1.8` | `0.1.7` | `>=22.12.0` |
 | `0.1.7` | `0.1.7` | `>=22.12.0` |
 | `0.1.6` | `0.1.5-rc.1` | `>=22.12.0` |
 
-0.4.1 以 **DSH 0.2.1-rc.5**（commit **b830ec950faba0a46dda564be3e2d854afed94f1**）为开发基线，peer/运行时范围保持 `^0.2.0-rc.1 || ^0.2.1-0`。开发锁定图为 0.2.1-rc.5、Cordis 4.0.5、Schemastery 3.18.5。**本版本**的兼容回归只在 rc.5 图上执行：201 项 checkout 测试、语法/严格声明检查、隔离 tarball 检查（193 项产物测试）。更早的 0.3.0 曾在 **0.2.0-rc.1**（`4878cdabd87d4041bdaff61d04c966883b9fd07a`）、**0.2.0-rc.2**（`639ed015397290b3745d163aafe02ffee4aa3f84`）、**0.2.1-alpha.5**（`1517a4dbca0a2789ff1d41ba439600f8547d23fa`）、**0.2.1-rc.3** 与 **0.2.1-rc.5** 上验证；这些旧图没有为 0.4.1 重跑，所以保持不变的 peer 范围不构成 0.4.1 的验证声明。它仍跟随 0.1.7 消息模型——工具结果是一等 `role: "tool"` 消息，`toolCallId` 提升为顶层字段，不再包在 user 角色块里——并使用 `compact-checkpoint` 检查点源标记；旧宿主写入的检查点（`kind: "plugin", plugin: "compact"`）在持久日志中仍会被识别。检查点替换仍是 `surfaceOp: { op: "replace", startSeq, endSeq }`，不支持旧替换字段 `start` / `end`；固定迁移目标也不代表对所有未来版本的兼容承诺。
+0.5.0 以 **DSH 0.2.2-alpha.3**（commit **05b1cae8db6e674c5685101494d4eec24652424a**）为开发基线，`engines.dsh` 与 peer 范围扩为 `^0.2.0-rc.1 || ^0.2.1-0 || ^0.2.2-alpha.3`，开发锁定图为 alpha.3、Cordis 4.0.6-alpha.2、Schemastery 3.18.6-alpha.2；0.2.2 宿主自身要求 Node `>=24.9.0`，表中 Node 列表示本包代码的下限。**本版本**的兼容回归在该图上执行：201 项 checkout 测试、语法/严格声明检查、隔离 tarball 检查（193 项产物测试）。0.4.1 的 rc.5 图没有为 0.5.0 重跑，所以扩大的范围不构成对 rc.5 的重新验证声明。它仍跟随 0.1.7 消息模型——工具结果是一等 `role: "tool"` 消息，`toolCallId` 提升为顶层字段，不再包在 user 角色块里——并使用 `compact-checkpoint` 检查点源标记；旧宿主写入的检查点（`kind: "plugin", plugin: "compact"`）在持久日志中仍会被识别。检查点替换仍是 `surfaceOp: { op: "replace", startSeq, endSeq }`，不支持旧替换字段 `start` / `end`；固定迁移目标也不代表对所有未来版本的兼容承诺。
 
 surface 第 0 个节点若是 `system/message`，系统头会留在压缩范围之外；自动选区从其后的 surface 节点开始，显式替换范围也不能包含系统头。Instant 保留策略不变：`retainTurns` 是偏好，`retainTokens`（或 `retainRatio` 换算预算）是上限，最近回合超限时保留能装下的后缀。工具配对保护可能将后缀扩展到超过上限；受保护的系统头单独保留。目标版本 basic 则按**最近尾部最低预算**选区，不是 instant 的整回合/上限策略，不能假定配置或行为完全等价。
 
-回归现还覆盖 PTC dispatch 索引与恢复、非安全 seq 拒绝、marker 分块、结构化 search/recall 值、真实 ToolRuntime PTC 程序、spill preview 保留和 dispatch 日志时序，以及此前的按 owner 失效后的客户端重载、保存期间继续编辑草稿、非递增 surface 的恢复选择与官方 pruner 来源恢复。使用打包产物的真实 `preset-ptc` 组合、真实 GUI、宿主重启和真实模型请求均未执行，这些项目仍未验证。
+回归现还覆盖 PTC dispatch 索引与恢复、非安全 seq 拒绝、marker 分块、结构化 search/recall 值、真实 PTC 执行器程序、spill preview 保留和 dispatch 日志时序，以及此前的按 owner 失效后的客户端重载、保存期间继续编辑草稿、非递增 surface 的恢复选择与官方 pruner 来源恢复。使用打包产物的真实 `preset-ptc` 组合、真实 GUI、宿主重启和真实模型请求均未执行，这些项目仍未验证。
 
 `recall(type: "result")` 会沿经过校验的官方 pruner 记录恢复原始工具结果；`recall(type: "seq")` 仍读取指定事件本身，包括裁剪后的版本。省略标记列出准确 seq，不把 surface 顺序当作数字区间。完整恢复指针及最低文本/格式开销可能超过异常小的检查点预算，返回的 token 统计会计入这些开销。
 
 固定源码依据：[basic 选区与系统头保护](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/compaction/compaction-basic/src/region.ts#L99-L155)、[替换操作字段](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/compaction/compaction-basic/src/region.ts#L505-L510)。
 
-0.2.0 的插件管理面板会强制校验这些范围：在不兼容的宿主上安装会以 `incompatible-version` 拒绝，并列出未满足的 `@deepseek-ai/dsh-*` peer。确需冒险时走精确版本豁免（`dsh plugin allow-version`，面板会展示该入口），不要靠改本包元数据强行安装。
+0.2.0 的插件管理面板会强制校验这些范围：在不兼容的宿主上安装会以 `incompatible-version` 拒绝，并列出未满足的 `@deepseek-ai/dsh-*` peer。0.2.2 的兼容检查把 prerelease 纳入匹配，范围里显式列出的 `^0.2.2-alpha.3` 也保证默认 semver 语义下同样成立。确需冒险时走精确版本豁免（`dsh plugin allow-version`，面板会展示该入口），不要靠改本包元数据强行安装。
 
 ## 示例
 
@@ -198,7 +199,7 @@ Harness 自带的 token 计量器与 compiler 估算器彼此独立。DSH 0.1.7 
 用 Harness 插件管理器安装到实际宿主使用的 profile。仅当该版本已发布时使用 npm 版本；否则使用下文重新打包的本地 tarball：
 
 ```bash
-dsh plugin --profile web add dsh-compaction-instant@0.4.1
+dsh plugin --profile web add dsh-compaction-instant@0.5.0
 ```
 
 DSH Desktop 对应版本请将 `--profile web` 换为 `--profile desktop`。先启动一次 Desktop 初始化 profile，再完全退出后执行 CLI 包操作，完成后重新打开；中断活跃会话前必须先征得用户确认。
@@ -234,7 +235,7 @@ DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` �
 
 **启用历史恢复工具（0.4.0 起）。** 打开 **插件 → dsh-compaction-instant → 配置**，在"历史恢复工具"区域勾选需要 `recall`、`search` 与 `/recall` 的预设，然后保存。列表默认是空的，因此升级后工具组处于关闭状态，直到完成这一步。保存只记录目标列表：Host 控制器会为这些预设的当前与后续 Agent 注册工具组，取消勾选时释放；不需要改预设 YAML，不改预设 revision，也不需要重启。已经在这里启用的预设，就不要再额外挂载 `dsh-compaction-instant/tool` 或 `/command`。
 
-**PTC 预设是独立的。** 内置 PTC 预设（`preset-ptc`）为工具组设置了 `mode: "ptc"`。安装本包、或只覆盖 `preset-standard`，都不会改变使用 `preset-ptc` 的会话所用引擎。要在 PTC 下启用即时压缩，请把内置 `preset-ptc` 行复制到 profile patch，保留 `mode: "ptc"`、`command-compact` 和 `tool-result-pruner`，只把其 `compaction` 组里的引擎行换成本包，然后显式选择该预设；使用 `mode: "ptc"` 的自定义预设同理。bundle 安装本身仍不会激活 instant 引擎。
+**PTC 预设是独立的。** 0.2.2 起，工具执行模式由执行器行承担：内置 PTC 预设用 `tool-executor-ptc` 替代了旧的 `tool-presentation` 加 `mode`。安装本包、或只覆盖 `preset-standard`，都不会改变使用 `preset-ptc` 的会话所用引擎。要在 PTC 下启用即时压缩，请把内置 `preset-ptc` 行复制到 profile patch，保留 `tool-executor-ptc`、`command-compact` 和 `tool-result-pruner`，只把其 `compaction` 组里的引擎行换成本包，然后显式选择该预设；使用执行器行的自定义预设同理。旧宿主上的 `tool-presentation` 加 `mode: "ptc"` 仍作为弃用兼容路径可用，但不是 0.2.2 的推荐写法。bundle 安装本身仍不会激活 instant 引擎。
 
 完全自定义的预设（另起一行 `@deepseek-ai/dsh-agent-preset`，使用自己的 `config.id`）同样可行，且不影响内置 `standard`，只需显式选择。每个预设上下文只能挂载一个 `ctx.compaction` 实现。不要添加宿主层引擎兜底：未限定作用域的监听器可能收到 agent 事件，与预设后端竞争。`/compact` 本身不绑定特定后端，但所选预设仍须有已启用的压缩后端。
 
@@ -246,7 +247,7 @@ DSH 0.2.0 的内置 `standard` 预设是一行 `@deepseek-ai/dsh-agent-preset` �
 # 在本插件源码目录重新生成包产物。
 npm pack
 # 将这个新产物安装到实际宿主 profile，使用它的绝对路径。
-dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.4.1.tgz
+dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.5.0.tgz
 ```
 
 执行这些部署步骤前，先向用户确认目标 profile、安装包名（直接安装还是别名）、当前解析路径/版本和目标预设。若已有旧别名部署，应明确规划替换/移除，避免留下两套可能的引擎解析路径。安装后检查新产物及自定义预设实际解析结果。**宿主重载/重启必须先经用户确认**，因为可能中断活跃会话。重载宿主以重新加载包代码和启动元数据，然后刷新 Web 页面，在原宿主 URL 和新会话上验证；profile patch 热重载或仅刷新页面，都不能证明已加载模块换成了新代码。以上是操作步骤，不代表本版本已经部署。
@@ -260,20 +261,20 @@ dsh plugin --profile web add /absolute/path/dsh-compaction-instant-0.4.1.tgz
 ## 开发
 
 ```bash
-npm ci          # 精确安装 DSH 0.2.1-rc.5 开发依赖图
+npm ci          # 精确安装 DSH 0.2.2-alpha.3 开发依赖图
 npm test        # compiler/config/session/settings/engine 集成测试
 npm run check   # 源码语法 + 严格公共类型声明检查
 npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注册检查
 ```
 
-本包只有两个直接运行时依赖：`@deepseek-ai/schemastery` 用于配置 schema（包括两个 volatile 设置表单），`@deepseek-ai/dsh-util-values` 提供共享不可变值工具。其余 Harness 组件仍是 peer；测试使用锁定的 0.2.1-rc.5 开发依赖，其中 `@deepseek-ai/dsh-scope` 用于控制器测试构造真实 Agent scope。`src/compiler.js` 仍保持零依赖。
+本包只有两个直接运行时依赖：`@deepseek-ai/schemastery` 用于配置 schema（包括两个 volatile 设置表单），`@deepseek-ai/dsh-util-values` 提供共享不可变值工具。其余 Harness 组件仍是 peer；测试使用锁定的 0.2.2-alpha.3 开发依赖，其中 `@deepseek-ai/dsh-scope` 用于控制器测试构造真实 Agent scope，两个执行器包用于挂载 0.2.2 的工具执行接缝。`src/compiler.js` 仍保持零依赖。
 
-0.4.1 在 0.3.0 的验证范围（替换字段与旧形状拒绝、系统头保护、显式范围、保留策略/工具配对、持久重放/来源记录、recall/search 文件引用、tool 角色消息投影、两代检查点标记、非安全 seq 拒绝、recall 条目上限与取消、PTC dispatch 编译与结果回读、结构化 search/recall 值、spill preview 与 dispatch 时序、设置桥接 schema 与设置平面的跟随/回退、根模块分发、安装产物导出/浏览器注册）之上，新增预设控制器与双区域页面：
+0.5.0 在 0.4.1 的验证范围（替换字段与旧形状拒绝、系统头保护、显式范围、保留策略/工具配对、持久重放/来源记录、recall/search 文件引用、tool 角色消息投影、两代检查点标记、非安全 seq 拒绝、recall 条目上限与取消、PTC dispatch 编译与结果回读、结构化 search/recall 值、spill preview 与 dispatch 时序、设置桥接 schema 与设置平面的跟随/回退、根模块分发、安装产物导出/浏览器注册、预设控制器与双区域页面）之上，新增 0.2.2 执行器接缝的迁移：
 
-- Host：默认空列表、对已存在 Agent 的启用与禁用、启动协调、未来 Agent、事件负载与实际预设不一致时的切换、重复事件与无关设置写入下的幂等、注册中途失败的精确回滚、Agent 销毁、控制器卸载、未知与空 id、仍在激活中的 scope 延迟注册，以及真实 PTC `run_code` 程序通过 Agent scope 的 SDK 完成 search → recall。
+- Host：PTC 与预设控制器夹具改用 `tool-executor-native` / `tool-executor-ptc`；`run_code` 经执行器批次调用并驱动真实程序，预设控制器的注册、释放、幂等与回滚行为保持原覆盖，真实 PTC 程序仍通过 Agent scope 的 SDK 完成 search → recall。
 - Client：清单的挂载读取、刷新、读取失败、已离开清单的旧 id、缺少 Remote；草稿暂存、排序后的原子保存、重置、只读行为、两个命名空间互不干扰，以及预设命名空间缺失时只隐藏对应区域，和系统预设名称回退。
 
-在 Linux、Node 24.22.1 上实测：rc.5 开发图通过全部 201 项检出测试、语法/类型检查与隔离 tarball 检查（193 项安装产物测试）。随后把包 link 进本机 Web profile 并在重启后的宿主上验证：Agent 工具表包含 `recall` 与 `search`，两项工具均实际执行；插件页清单加载并成功保存。GUI 内切换预设、真实 `preset-ptc` 组合与更早的隔离图本次未重跑。上方压缩率表是历史测量，不是本版本重新运行的结果。
+在 Linux、Node 24.22.1 上实测：alpha.3 开发图通过全部 201 项检出测试、语法/类型检查与隔离 tarball 检查（193 项安装产物测试）。0.5.0 没有把包部署到本机 Web profile，也没有重启宿主或执行真实模型请求；GUI 内切换预设、真实 `preset-ptc` 组合与 rc.5 及更早的隔离图本次未重跑。上方压缩率表是历史测量，不是本版本重新运行的结果。
 
 ## 和官方引擎的区别
 
@@ -285,4 +286,4 @@ npm run check:package # 打包 + 隔离安装产物的测试/导出/浏览器注
 - `compaction/summary` 事件携带**压缩后的条目本身**——UI 里可展开的检查点行显示的就是模型实际看到的内容，外面包一层**能自动变长的代码框**（框线永远比内容里的 ``` 长，所以含 markdown 的消息也能整齐地显示成一个代码块），检查点开头还有一段简短的使用指南，告诉模型怎么用 `recall` / `search` 找回被省略的内容。
 - 权衡：对以长对话、叙述为主的历史，检查点的信息密度可能不如 LLM 摘要（长句是截断而不是合并）。正在进行的对话有逐字保留的尾部（`retainTurns`/`retainTokens`）兜底，其余持久事件内容都能通过 `(seq N)` 指针 + recall 找回；被 spill 替换为 preview 的 PTC dispatch 记录例外。
 
-代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 引入本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；0.4.1 继续保留该图标与导出，并在 tool、command、settings 之外新增 `preset-tools` 图标子路径。配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。
+代码采用 MIT 许可证。[插件图标](<assets/icon.svg>) 改编自 [Lucide Shrink](https://lucide.dev/icons/shrink)，采用 [ISC 许可证](<assets/LICENSE.lucide>)，详见[来源与修改说明](<assets/README.md>)。0.2.1 引入本地包图标，已通过 DSH 0.2.0-rc.2 和 0.2.1-rc.2 的实际元数据读取器验证；0.4.1 在 tool、command、settings 之外新增 `preset-tools` 图标子路径，0.5.0 保持同一组资源。配套插件行的图标使用新版子路径资源接口，已在 0.2.1-rc.2 验证。旧版配套插件行保留默认图标。

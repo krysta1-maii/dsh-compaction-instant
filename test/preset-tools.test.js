@@ -18,6 +18,8 @@ import { PtcRuntime } from "@deepseek-ai/dsh-ptc-runtime";
 import { createScope } from "@deepseek-ai/dsh-scope";
 import { Session } from "@deepseek-ai/dsh-session";
 import SystemPrompt from "@deepseek-ai/dsh-system-prompt";
+import * as NativeToolExecutor from "@deepseek-ai/dsh-tool-executor-native";
+import * as PtcToolExecutor from "@deepseek-ai/dsh-tool-executor-ptc";
 import ToolRuntime, { RUN_CODE_NAME } from "@deepseek-ai/dsh-tools";
 import * as presetTools from "../src/preset-tools.js";
 
@@ -75,9 +77,16 @@ async function fixture(options = {}) {
   ctx.provide("workingDirectory", { ensure: async () => process.cwd() });
   if (options.settings !== undefined) ctx.provide("settings", options.settings);
   await ctx.plugin(SystemPrompt, {});
-  await ctx.plugin(ToolRuntime, { mode: options.mode ?? "native" });
+  await ctx.plugin(ToolRuntime, {});
   await ctx.plugin(CommandRuntime);
-  if (options.mode === "ptc") await ctx.plugin(FakeRuntime);
+  // DSH 0.2.2 selects execution through executor plugins; the PTC executor
+  // activates only after the runtime it injects.
+  if (options.mode === "ptc") {
+    await ctx.plugin(FakeRuntime);
+    await ctx.plugin(PtcToolExecutor);
+  } else {
+    await ctx.plugin(NativeToolExecutor);
+  }
   // A loop-like owner that declares the services an Agent scope resolves
   // through. It injects only `tools`, matching dsh-agent-loop: the Agent scope
   // answers `agent.ctx.tools` but refuses `agent.ctx.commands`, so the
@@ -241,13 +250,17 @@ test("the served section is authoritative and disabling releases the live Agent"
     assert.deepEqual(fx.toolNames(agent), [], "disabling releases the registration");
     assert.deepEqual(fx.commandNames(agent), []);
     assert.equal(fx.ctx.tools.get("search", agent), undefined, "lookup sees the released tool as absent");
-    const refused = await fx.ctx.tools.execute({
+    const releasedBatch = await fx.ctx.tools.execute({
       signal: new AbortController().signal,
-      callId: ToolCallId("released-call"),
-      name: "recall",
-      arguments: { type: "seq", id: "0" },
+      calls: [{
+        type: "tool-call",
+        id: ToolCallId("released-call"),
+        name: "recall",
+        arguments: JSON.stringify({ type: "seq", id: "0" })
+      }],
       agent
     });
+    const refused = releasedBatch.results[0].result;
     assert.equal(refused.isError, true, "execution is refused after release");
     assert.equal(refused.error?.info?.code ?? refused.error?.code, "UNKNOWN_TOOL");
   } finally {
@@ -408,9 +421,11 @@ test("a PTC target scope binds search and recall into run_code", async () => {
     await fx.announce(agent);
     await fx.announce(control);
 
+    // The registry reports registered capabilities only; run_code is owned by
+    // the executor and shows up in the assembled model tool list instead.
     const names = fx.ctx.tools.schemas(agent).map((schema) => schema.name).sort();
-    assert.deepEqual(names, ["recall", RUN_CODE_NAME, "search"]);
-    assert.deepEqual(fx.ctx.tools.schemas(control).map((schema) => schema.name), [RUN_CODE_NAME], "the control Agent sees only run_code");
+    assert.deepEqual(names, ["recall", "search"]);
+    assert.deepEqual(fx.ctx.tools.schemas(control).map((schema) => schema.name), [], "the control Agent registers no companion tools");
 
     const code = [
       "const found = await tools.search({ pattern: 'alpha marker' });",
@@ -426,13 +441,17 @@ test("a PTC target scope binds search and recall into run_code", async () => {
       const restored = await binding.functions.recall({ type: "seq", id: String(hit.seq) });
       return { logs: [], value: { seq: hit.seq, restoredSeqs: restored.seqs } };
     };
-    const executed = await fx.ctx.tools.execute({
+    const settled = await fx.ctx.tools.execute({
       signal: new AbortController().signal,
-      callId: ToolCallId("ptc-call"),
-      name: RUN_CODE_NAME,
-      arguments: { code, description: "Search and restore" },
+      calls: [{
+        type: "tool-call",
+        id: ToolCallId("ptc-call"),
+        name: RUN_CODE_NAME,
+        arguments: JSON.stringify({ code, description: "Search and restore" })
+      }],
       agent
     });
+    const executed = settled.results[0].result;
     assert.equal(executed.isError, false, executed.error?.message);
     assert.deepEqual(executed.value.result.restoredSeqs, [executed.value.result.seq]);
   } finally {

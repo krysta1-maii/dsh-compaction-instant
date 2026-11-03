@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-11-03
+
+### DSH 0.2.2-alpha.3 development baseline
+
+- Moves the default development graph from DSH **0.2.1-rc.5** to **0.2.2-alpha.3** (commit **05b1cae8db6e674c5685101494d4eec24652424a**), with Cordis **4.0.6-alpha.2** and Schemastery **3.18.6-alpha.2**. `engines.dsh`, the DSH peer ranges, and the two runtime dependency ranges add an explicit `^0.2.2-alpha.3` alternative. The earlier alternatives still cover 0.2.1 hosts, while a 0.2.2 host no longer installs a second copy of `@deepseek-ai/dsh-util-values` or `@deepseek-ai/schemastery`.
+- Migrates the PTC and preset-controller fixtures from the removed `dsh-tools` `mode` config to the 0.2.2 executor seam. The tests mount `@deepseek-ai/dsh-tool-executor-native` or `@deepseek-ai/dsh-tool-executor-ptc` and call `ctx.tools.execute` with a `ToolBatchInput`; `run_code` is executor-owned, so registry schema assertions now cover registered capabilities and the model-facing transport is exercised through the executor.
+- No runtime source change was required: every Host import, event, and service used by the package still exists at 0.2.2-alpha.3, and the strict declaration check passes against the new types.
+- Documentation and the bundle header name the new target. The PTC section points at the `tool-executor-ptc` row; `@deepseek-ai/dsh-agent-tool-presentation` with `mode` remains a deprecated compatibility path on 0.2.2, not the recommended composition.
+
+### Verification
+
+- Linux / Node **24.22.1**: the alpha.3 development graph passed `npm ls --all`, syntax and strict declaration checks, all **201** checkout tests, and the isolated tarball package check with **193** artifact tests (`dsh-compaction-instant-0.5.0.tgz`).
+- The 0.2.1-rc.5 graph was not re-run for this release; 0.4.1 remains the rc.5 verification record. No live profile deployment, host restart, GUI session, or real model request was performed for 0.5.0.
+
 ## 0.4.1 — 2026-11-03
 
 ### Fixes from the first live deployment
